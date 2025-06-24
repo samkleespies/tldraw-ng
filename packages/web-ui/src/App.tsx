@@ -161,19 +161,30 @@ const App: Component = () => {
     const core = (window as any).whiteboardCore;
     if (!core) return;
 
-    const defaultSize = 200; // Increased from 100 to make shapes more visible
+    const defaultSize = 120; // Smaller, more reasonable size
 
-    console.log(`Creating ${tool} at (${x}, ${y}) with size ${defaultSize}`);
+    // Calculate position so shape center is at cursor position
+    const halfSize = defaultSize / 2;
+    const centerX = x - halfSize;
+    const centerY = y - halfSize;
 
     switch (tool) {
       case 'rectangle':
-        core.create_rectangle(x, y, defaultSize, defaultSize);
+        // Create a perfect square
+        console.log(`Creating square at (${centerX}, ${centerY}) with size ${defaultSize}`);
+        core.create_rectangle(centerX, centerY, defaultSize, defaultSize);
         break;
       case 'ellipse':
-        core.create_ellipse(x, y, defaultSize, defaultSize);
+        // Create a perfect circle
+        console.log(`Creating circle at (${centerX}, ${centerY}) with size ${defaultSize}`);
+        core.create_ellipse(centerX, centerY, defaultSize, defaultSize);
         break;
       case 'line':
-        core.create_line(x, y, x + defaultSize, y + defaultSize);
+        // Create a line centered on the click point
+        const lineLength = defaultSize * 0.8; // Slightly shorter than square
+        const halfLength = lineLength / 2;
+        console.log(`Creating line from (${x - halfLength}, ${y - halfLength}) to (${x + halfLength}, ${y + halfLength})`);
+        core.create_line(x - halfLength, y - halfLength, x + halfLength, y + halfLength);
         break;
     }
 
@@ -379,10 +390,10 @@ const App: Component = () => {
           class={`tool-btn ${selectedTool() === 'rectangle' ? 'active' : ''}`}
           onClick={() => handleToolChange('rectangle')}
           disabled={!isInitialized()}
-          title="Rectangle (R)"
+          title="Square (R)"
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="4" width="10" height="8" rx="1"/>
+            <rect x="4" y="4" width="8" height="8" rx="1"/>
           </svg>
         </button>
 
@@ -390,10 +401,10 @@ const App: Component = () => {
           class={`tool-btn ${selectedTool() === 'ellipse' ? 'active' : ''}`}
           onClick={() => handleToolChange('ellipse')}
           disabled={!isInitialized()}
-          title="Ellipse (O)"
+          title="Circle (O)"
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-            <ellipse cx="8" cy="8" rx="5" ry="4"/>
+            <circle cx="8" cy="8" r="4"/>
           </svg>
         </button>
 

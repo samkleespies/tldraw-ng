@@ -390,28 +390,23 @@ impl WhiteboardCore {
     }
 
     fn tessellate_ellipse(&self, vertices: &mut Vec<Vertex>, pos: Point, width: f64, height: f64, color: [f32; 4]) {
-        let center_x = pos.x as f32 + width as f32 / 2.0;
-        let center_y = pos.y as f32 + height as f32 / 2.0;
-        let rx = width as f32 / 2.0;
-        let ry = height as f32 / 2.0;
+        let x = pos.x as f32;
+        let y = pos.y as f32;
+        let w = width as f32;
+        let h = height as f32;
 
-        let segments = 32;
-        for i in 0..segments {
-            let angle1 = (i as f32 / segments as f32) * 2.0 * std::f32::consts::PI;
-            let angle2 = ((i + 1) as f32 / segments as f32) * 2.0 * std::f32::consts::PI;
-
-            let x1 = center_x + rx * angle1.cos();
-            let y1 = center_y + ry * angle1.sin();
-            let x2 = center_x + rx * angle2.cos();
-            let y2 = center_y + ry * angle2.sin();
-
-            // Triangle from center to edge
-            vertices.extend_from_slice(&[
-                Vertex { position: [center_x, center_y], color, uv: [0.5, 0.5], shape_type: 1.0 },
-                Vertex { position: [x1, y1], color, uv: [0.0, 0.0], shape_type: 1.0 },
-                Vertex { position: [x2, y2], color, uv: [1.0, 0.0], shape_type: 1.0 },
-            ]);
-        }
+        // Create a simple quad and let the fragment shader handle the circular shape
+        // This avoids the "sun" effect from triangle tessellation
+        vertices.extend_from_slice(&[
+            // Triangle 1
+            Vertex { position: [x, y], color, uv: [0.0, 0.0], shape_type: 1.0 },
+            Vertex { position: [x + w, y], color, uv: [1.0, 0.0], shape_type: 1.0 },
+            Vertex { position: [x, y + h], color, uv: [0.0, 1.0], shape_type: 1.0 },
+            // Triangle 2
+            Vertex { position: [x + w, y], color, uv: [1.0, 0.0], shape_type: 1.0 },
+            Vertex { position: [x + w, y + h], color, uv: [1.0, 1.0], shape_type: 1.0 },
+            Vertex { position: [x, y + h], color, uv: [0.0, 1.0], shape_type: 1.0 },
+        ]);
     }
 
     fn tessellate_line(&self, vertices: &mut Vec<Vertex>, start: Point, end: Point, color: [f32; 4]) {
