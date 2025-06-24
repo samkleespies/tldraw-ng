@@ -313,6 +313,18 @@ impl WhiteboardCore {
         self.is_dragging
     }
 
+    /// Get current camera scale for coordinate conversion
+    #[wasm_bindgen]
+    pub fn get_camera_scale(&self) -> f32 {
+        self.camera_scale
+    }
+
+    /// Get current camera translation for coordinate conversion
+    #[wasm_bindgen]
+    pub fn get_camera_translation(&self) -> Vec<f32> {
+        vec![self.camera_translation[0], self.camera_translation[1]]
+    }
+
     /// Get cursor type for resize handle at position (for cursor feedback)
     #[wasm_bindgen]
     pub fn get_resize_cursor(&self, x: f64, y: f64) -> String {
@@ -664,23 +676,57 @@ impl WhiteboardCore {
         self.selection_current = None;
     }
 
-    /// Handle wheel event for zooming
+    /// Handle wheel event for vertical scrolling (like tldraw)
     #[wasm_bindgen]
     pub fn handle_wheel(&mut self, _dx: f64, dy: f64) {
-        // Simple zoom implementation
-        let zoom_factor = if dy > 0.0 { 0.9 } else { 1.1 };
-        self.camera_scale = (self.camera_scale * zoom_factor).clamp(0.1, 10.0);
+        // Vertical scrolling like tldraw - wheel moves camera up/down
+        // Use a much smaller scroll speed - typical wheel delta is around 100, so 0.3 gives ~30px movement
+        let scroll_speed = 0.3;
+        self.camera_translation[1] += (dy * scroll_speed) as f32;
 
         if let Some(gpu) = &mut self.gpu {
             gpu.update_camera(self.camera_translation, self.camera_scale);
         }
     }
 
-    /// Pan the camera
+    /// Handle wheel event with modifier keys for zooming at cursor position
+    #[wasm_bindgen]
+    pub fn handle_wheel_zoom(&mut self, _dx: f64, dy: f64, cursor_x: f64, cursor_y: f64) {
+        // Zoom implementation (for Ctrl+wheel) - zoom to cursor position like tldraw
+        let zoom_factor = if dy > 0.0 { 0.9 } else { 1.1 };
+        let old_scale = self.camera_scale;
+        let new_scale = (old_scale * zoom_factor).clamp(0.1, 10.0);
+
+        // Only proceed if scale actually changed (within limits)
+        if (new_scale - old_scale).abs() > f32::EPSILON {
+            // Convert cursor position to world coordinates before zoom
+            let world_x_before = (cursor_x / old_scale as f64) + self.camera_translation[0] as f64;
+            let world_y_before = (cursor_y / old_scale as f64) + self.camera_translation[1] as f64;
+
+            // Update scale
+            self.camera_scale = new_scale;
+
+            // Convert the same world point back to screen coordinates with new scale
+            let world_x_after = (cursor_x / new_scale as f64) + self.camera_translation[0] as f64;
+            let world_y_after = (cursor_y / new_scale as f64) + self.camera_translation[1] as f64;
+
+            // Adjust camera translation to keep the cursor point fixed
+            self.camera_translation[0] += (world_x_before - world_x_after) as f32;
+            self.camera_translation[1] += (world_y_before - world_y_after) as f32;
+
+            if let Some(gpu) = &mut self.gpu {
+                gpu.update_camera(self.camera_translation, self.camera_scale);
+            }
+        }
+    }
+
+    /// Pan the camera (for middle mouse drag)
     #[wasm_bindgen]
     pub fn pan_camera(&mut self, dx: f64, dy: f64) {
-        self.camera_translation[0] += dx as f32;
-        self.camera_translation[1] += dy as f32;
+        // Apply movement directly - dx/dy are already in the right direction from mouse movement
+        // Invert the movement so dragging right moves the view right (like tldraw)
+        self.camera_translation[0] -= dx as f32;
+        self.camera_translation[1] -= dy as f32;
 
         if let Some(gpu) = &mut self.gpu {
             gpu.update_camera(self.camera_translation, self.camera_scale);

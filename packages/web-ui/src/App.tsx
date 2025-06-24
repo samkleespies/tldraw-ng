@@ -8,6 +8,7 @@ type MsgFromUI =
   | { type: 'pointerDown'; x: number; y: number; buttons: number }
   | { type: 'pointerUp'; x: number; y: number }
   | { type: 'wheel'; dx: number; dy: number }
+  | { type: 'wheelZoom'; dx: number; dy: number; cursorX: number; cursorY: number }
   | { type: 'command'; name: 'undo' | 'redo' | 'duplicate' | 'deleteSelection' | 'clear' }
   | { type: 'toolChange'; tool: 'select' | 'rectangle' | 'ellipse' }
   | { type: 'createShape'; tool: 'rectangle' | 'ellipse'; x: number; y: number; width?: number; height?: number }
@@ -32,6 +33,7 @@ const App: Component = () => {
   const [isDragging, setIsDragging] = createSignal(false);
   const [isHoveringShape, setIsHoveringShape] = createSignal(false);
   const [resizeCursor, setResizeCursor] = createSignal('default');
+  const [isPanning, setIsPanning] = createSignal(false);
 
   let canvasRef: HTMLCanvasElement | undefined;
   let worker: Worker | null = null;
@@ -157,6 +159,11 @@ const App: Component = () => {
         core.render_frame();
         break;
 
+      case 'wheelZoom':
+        core.handle_wheel_zoom(msg.dx, msg.dy, msg.cursorX, msg.cursorY);
+        core.render_frame();
+        break;
+
       case 'command':
         handleCoreCommand(msg.name);
         break;
@@ -172,28 +179,33 @@ const App: Component = () => {
     const core = (window as any).whiteboardCore;
     if (!core) return;
 
+    // Convert screen coordinates to world coordinates (same as in Rust core)
+    const camera_scale = core.get_camera_scale();
+    const camera_translation = core.get_camera_translation();
+    const world_x = (x / camera_scale) + camera_translation[0];
+    const world_y = (y / camera_scale) + camera_translation[1];
+
     const defaultSize = 120; // Smaller, more reasonable size
 
-    // Calculate position so shape center is at cursor position
+    // Calculate position so shape center is at cursor position (in world coordinates)
     const halfSize = defaultSize / 2;
-    const centerX = x - halfSize;
-    const centerY = y - halfSize;
+    const centerX = world_x - halfSize;
+    const centerY = world_y - halfSize;
 
     switch (tool) {
       case 'rectangle':
         // Create a perfect square
-        console.log(`Creating green square at (${centerX}, ${centerY}) with size ${defaultSize}`);
+        // Creating green square at world coordinates
         core.create_rectangle(centerX, centerY, defaultSize, defaultSize);
         break;
       case 'ellipse':
         // Create a perfect circle
-        console.log(`Creating red circle at (${centerX}, ${centerY}) with size ${defaultSize}`);
+        // Creating red circle at world coordinates
         core.create_ellipse(centerX, centerY, defaultSize, defaultSize);
         break;
     }
 
     const newCount = core.shape_count();
-    console.log(`Shape count after creation: ${newCount}`);
     setShapeCount(newCount);
   };
 
@@ -229,6 +241,7 @@ const App: Component = () => {
 
     if (e.button === 1) { // Middle mouse button
       isMiddleMouseDown = true;
+      setIsPanning(true);
       e.preventDefault();
       return;
     }
@@ -269,6 +282,13 @@ const App: Component = () => {
   const handleCanvasPointerUp = (e: PointerEvent) => {
     if (!isInitialized()) return;
 
+    // Handle middle mouse button release
+    if (e.button === 1) {
+      isMiddleMouseDown = false;
+      setIsPanning(false);
+      return;
+    }
+
     const rect = canvasRef!.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -283,17 +303,38 @@ const App: Component = () => {
   const handleCanvasWheel = (e: WheelEvent) => {
     if (!isInitialized()) return;
 
-    e.preventDefault();
-    sendToCore({
-      type: 'wheel',
-      dx: e.deltaX,
-      dy: e.deltaY
-    });
+    e.preventDefault(); // Prevent page scroll
+
+    // Get cursor position relative to canvas
+    const rect = canvasRef!.getBoundingClientRect();
+    const cursorX = e.clientX - rect.left;
+    const cursorY = e.clientY - rect.top;
+
+    // Removed debug logging
+
+    // Check if Ctrl/Cmd is held for zooming (like tldraw)
+    if (e.ctrlKey || e.metaKey) {
+      sendToCore({
+        type: 'wheelZoom',
+        dx: e.deltaX,
+        dy: e.deltaY,
+        cursorX,
+        cursorY
+      });
+    } else {
+      // Regular wheel scrolling (vertical movement)
+      sendToCore({
+        type: 'wheel',
+        dx: e.deltaX,
+        dy: e.deltaY
+      });
+    }
   };
 
   const handleGlobalMouseUp = (e: MouseEvent) => {
     if (e.button === 1) { // Middle mouse button
       isMiddleMouseDown = false;
+      setIsPanning(false);
     }
   };
 
@@ -366,7 +407,7 @@ const App: Component = () => {
           ref={canvasRef}
           class={`canvas ${selectedTool() === 'select' ? 'select-tool' : ''} ${
             selectedTool() === 'select' && isHoveringShape() ? 'hovering-shape' : ''
-          } ${isDragging() ? 'dragging' : ''} ${
+          } ${isDragging() ? 'dragging' : ''} ${isPanning() ? 'panning' : ''} ${
             resizeCursor() !== 'default' ? `resize-${resizeCursor().replace('-resize', '')}` : ''
           }`}
           onPointerDown={handleCanvasPointerDown}

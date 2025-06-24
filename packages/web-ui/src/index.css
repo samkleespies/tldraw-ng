@@ -60,6 +60,10 @@ body {
   cursor: grabbing;
 }
 
+.canvas.panning {
+  cursor: grabbing;
+}
+
 /* Resize cursors */
 .canvas.resize-nw {
   cursor: nw-resize;
