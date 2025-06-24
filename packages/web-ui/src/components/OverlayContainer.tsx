@@ -126,7 +126,7 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
             type: widget.type,
             active: widget.active,
             bounds: domBounds,
-            zIndex: 1000 + widget.id,
+            zIndex: 50 + widget.id, // Keep widgets below toolbar (z-index: 100)
           };
 
           const currentOverlay = overlayStore[widget.id];
@@ -497,7 +497,7 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
   return (
     <div
       ref={containerRef}
-      style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1000;"
+      style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 50;"
     >
       <Index each={overlayIds()} fallback={<div>No widgets</div>}>
         {(overlayId) => {

@@ -285,6 +285,9 @@ const App: Component = () => {
           if (shapeId) {
             setShapeCount((window as any).whiteboardCore?.shape_count() || 0);
           }
+
+          // Auto-switch to select tool after drag-to-size creation
+          setSelectedTool('select');
         }
         break;
 
@@ -370,6 +373,9 @@ const App: Component = () => {
 
     // Render the frame to make the shape visible immediately
     core.render_frame();
+
+    // Auto-switch to select tool after creating a shape
+    setSelectedTool('select');
   };
 
   const createWidgetAtPosition = (widgetType: string, x: number, y: number) => {
@@ -416,6 +422,9 @@ const App: Component = () => {
 
     // Render the frame to make the widget visible immediately
     core.render_frame();
+
+    // Auto-switch to select tool after creating a widget
+    setSelectedTool('select');
 
     // Test coordinate transformation for the new widget
     const transformer = getCoordinateTransformer();
