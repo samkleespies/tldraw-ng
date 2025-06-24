@@ -47,6 +47,23 @@ impl Point {
 pub enum ShapeType {
     Rectangle { width: f64, height: f64 },
     Ellipse { width: f64, height: f64 },
+    Widget { widget_type: WidgetType, width: f64, height: f64, active: bool },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum WidgetType {
+    Monaco { language: String, file_path: String },
+    Terminal { session_id: String },
+    Preview { url: String, preview_type: PreviewType },
+    Chat { conversation_id: String },
+    Explorer { root_path: String },
+    Console { log_level: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PreviewType {
+    File,
+    Server,
 }
 
 /// A shape on the whiteboard
@@ -180,6 +197,14 @@ fn apply_resize(shape: &mut Shape, resize_data: ResizeData) {
                 *height = new_height;
             }
         }
+        ShapeType::Widget { width, height, .. } => {
+            if let Some(new_width) = resize_data.new_width {
+                *width = new_width;
+            }
+            if let Some(new_height) = resize_data.new_height {
+                *height = new_height;
+            }
+        }
     }
 }
 
@@ -203,6 +228,9 @@ impl Shape {
                 BoundingBox::new(x, y, x + width, y + height)
             }
             ShapeType::Ellipse { width, height } => {
+                BoundingBox::new(x, y, x + width, y + height)
+            }
+            ShapeType::Widget { width, height, .. } => {
                 BoundingBox::new(x, y, x + width, y + height)
             }
         }
@@ -386,6 +414,276 @@ impl WhiteboardCore {
         self.selected_shapes.clear();
     }
 
+    /// Create a Monaco editor widget
+    #[wasm_bindgen]
+    pub fn create_monaco_widget(&mut self, x: f64, y: f64, width: f64, height: f64, language: &str, file_path: &str) -> u32 {
+        // Save state before operation
+        self.save_state();
+
+        let id = ShapeId(self.next_id);
+        self.next_id += 1;
+
+        let shape = Shape {
+            id,
+            position: Point { x, y },
+            shape_type: ShapeType::Widget {
+                widget_type: WidgetType::Monaco {
+                    language: language.to_string(),
+                    file_path: file_path.to_string(),
+                },
+                width,
+                height,
+                active: true,
+            },
+            color: [1.0, 1.0, 1.0, 1.0], // White outline
+        };
+
+        self.shapes.insert(id, shape);
+        id.0
+    }
+
+    /// Create a terminal widget
+    #[wasm_bindgen]
+    pub fn create_terminal_widget(&mut self, x: f64, y: f64, width: f64, height: f64, session_id: &str) -> u32 {
+        // Save state before operation
+        self.save_state();
+
+        let id = ShapeId(self.next_id);
+        self.next_id += 1;
+
+        let shape = Shape {
+            id,
+            position: Point { x, y },
+            shape_type: ShapeType::Widget {
+                widget_type: WidgetType::Terminal {
+                    session_id: session_id.to_string(),
+                },
+                width,
+                height,
+                active: true,
+            },
+            color: [1.0, 1.0, 1.0, 1.0], // White outline
+        };
+
+        self.shapes.insert(id, shape);
+        id.0
+    }
+
+    /// Create a preview widget
+    #[wasm_bindgen]
+    pub fn create_preview_widget(&mut self, x: f64, y: f64, width: f64, height: f64, url: &str, is_server: bool) -> u32 {
+        // Save state before operation
+        self.save_state();
+
+        let id = ShapeId(self.next_id);
+        self.next_id += 1;
+
+        let preview_type = if is_server { PreviewType::Server } else { PreviewType::File };
+
+        let shape = Shape {
+            id,
+            position: Point { x, y },
+            shape_type: ShapeType::Widget {
+                widget_type: WidgetType::Preview {
+                    url: url.to_string(),
+                    preview_type,
+                },
+                width,
+                height,
+                active: true,
+            },
+            color: [1.0, 1.0, 1.0, 1.0], // White outline
+        };
+
+        self.shapes.insert(id, shape);
+        id.0
+    }
+
+    /// Create a chat widget
+    #[wasm_bindgen]
+    pub fn create_chat_widget(&mut self, x: f64, y: f64, width: f64, height: f64, conversation_id: &str) -> u32 {
+        // Save state before operation
+        self.save_state();
+
+        let id = ShapeId(self.next_id);
+        self.next_id += 1;
+
+        let shape = Shape {
+            id,
+            position: Point { x, y },
+            shape_type: ShapeType::Widget {
+                widget_type: WidgetType::Chat {
+                    conversation_id: conversation_id.to_string(),
+                },
+                width,
+                height,
+                active: true,
+            },
+            color: [1.0, 1.0, 1.0, 1.0], // White outline
+        };
+
+        self.shapes.insert(id, shape);
+        id.0
+    }
+
+    /// Create an explorer widget
+    #[wasm_bindgen]
+    pub fn create_explorer_widget(&mut self, x: f64, y: f64, width: f64, height: f64, root_path: &str) -> u32 {
+        // Save state before operation
+        self.save_state();
+
+        let id = ShapeId(self.next_id);
+        self.next_id += 1;
+
+        let shape = Shape {
+            id,
+            position: Point { x, y },
+            shape_type: ShapeType::Widget {
+                widget_type: WidgetType::Explorer {
+                    root_path: root_path.to_string(),
+                },
+                width,
+                height,
+                active: true,
+            },
+            color: [1.0, 1.0, 1.0, 1.0], // White outline
+        };
+
+        self.shapes.insert(id, shape);
+        id.0
+    }
+
+    /// Create a console widget
+    #[wasm_bindgen]
+    pub fn create_console_widget(&mut self, x: f64, y: f64, width: f64, height: f64, log_level: &str) -> u32 {
+        // Save state before operation
+        self.save_state();
+
+        let id = ShapeId(self.next_id);
+        self.next_id += 1;
+
+        let shape = Shape {
+            id,
+            position: Point { x, y },
+            shape_type: ShapeType::Widget {
+                widget_type: WidgetType::Console {
+                    log_level: log_level.to_string(),
+                },
+                width,
+                height,
+                active: true,
+            },
+            color: [1.0, 1.0, 1.0, 1.0], // White outline
+        };
+
+        self.shapes.insert(id, shape);
+        id.0
+    }
+
+    /// Toggle widget active state
+    #[wasm_bindgen]
+    pub fn toggle_widget_active(&mut self, shape_id: u32) -> bool {
+        let shape_id = ShapeId(shape_id);
+        if let Some(shape) = self.shapes.get_mut(&shape_id) {
+            if let ShapeType::Widget { active, .. } = &mut shape.shape_type {
+                *active = !*active;
+                return *active;
+            }
+        }
+        false
+    }
+
+    /// Get widget info as JSON string
+    #[wasm_bindgen]
+    pub fn get_widget_info(&self, shape_id: u32) -> Option<String> {
+        let shape_id = ShapeId(shape_id);
+        if let Some(shape) = self.shapes.get(&shape_id) {
+            if let ShapeType::Widget { widget_type, width, height, active } = &shape.shape_type {
+                let info = serde_json::json!({
+                    "id": shape_id.0,
+                    "type": match widget_type {
+                        WidgetType::Monaco { .. } => "monaco",
+                        WidgetType::Terminal { .. } => "terminal",
+                        WidgetType::Preview { .. } => "preview",
+                        WidgetType::Chat { .. } => "chat",
+                        WidgetType::Explorer { .. } => "explorer",
+                        WidgetType::Console { .. } => "console",
+                    },
+                    "position": {
+                        "x": shape.position.x,
+                        "y": shape.position.y
+                    },
+                    "size": {
+                        "width": width,
+                        "height": height
+                    },
+                    "active": active,
+                    "props": widget_type
+                });
+                return Some(info.to_string());
+            }
+        }
+        None
+    }
+
+    /// Get all active widgets as JSON string
+    #[wasm_bindgen]
+    pub fn get_active_widgets(&self) -> String {
+        let mut widgets = Vec::new();
+
+        for shape in self.shapes.values() {
+            if let ShapeType::Widget { active: true, .. } = &shape.shape_type {
+                if let Some(widget_info) = self.get_widget_info(shape.id.0) {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&widget_info) {
+                        widgets.push(parsed);
+                    }
+                }
+            }
+        }
+
+        serde_json::json!(widgets).to_string()
+    }
+
+    /// Convert world coordinates to screen coordinates
+    #[wasm_bindgen]
+    pub fn world_to_screen(&self, world_x: f64, world_y: f64) -> Vec<f64> {
+        let screen_x = (world_x - self.camera_translation[0] as f64) * self.camera_scale as f64;
+        let screen_y = (world_y - self.camera_translation[1] as f64) * self.camera_scale as f64;
+        vec![screen_x, screen_y]
+    }
+
+    /// Convert screen coordinates to world coordinates
+    #[wasm_bindgen]
+    pub fn screen_to_world(&self, screen_x: f64, screen_y: f64) -> Vec<f64> {
+        let world_x = (screen_x / self.camera_scale as f64) + self.camera_translation[0] as f64;
+        let world_y = (screen_y / self.camera_scale as f64) + self.camera_translation[1] as f64;
+        vec![world_x, world_y]
+    }
+
+    /// Get widget screen bounds for overlay positioning
+    #[wasm_bindgen]
+    pub fn get_widget_screen_bounds(&self, shape_id: u32) -> Option<String> {
+        let shape_id = ShapeId(shape_id);
+        if let Some(shape) = self.shapes.get(&shape_id) {
+            if let ShapeType::Widget { width, height, .. } = &shape.shape_type {
+                // Convert widget world coordinates to screen coordinates
+                let screen_pos = self.world_to_screen(shape.position.x, shape.position.y);
+                let screen_width = width * self.camera_scale as f64;
+                let screen_height = height * self.camera_scale as f64;
+
+                let bounds = serde_json::json!({
+                    "x": screen_pos[0],
+                    "y": screen_pos[1],
+                    "width": screen_width,
+                    "height": screen_height,
+                    "scale": self.camera_scale
+                });
+                return Some(bounds.to_string());
+            }
+        }
+        None
+    }
+
     /// Get the number of shapes
     #[wasm_bindgen]
     pub fn shape_count(&self) -> usize {
@@ -422,14 +720,14 @@ impl WhiteboardCore {
 
     /// Get current camera scale for coordinate conversion
     #[wasm_bindgen]
-    pub fn get_camera_scale(&self) -> f32 {
-        self.camera_scale
+    pub fn get_camera_scale(&self) -> f64 {
+        self.camera_scale as f64
     }
 
     /// Get current camera translation for coordinate conversion
     #[wasm_bindgen]
-    pub fn get_camera_translation(&self) -> Vec<f32> {
-        vec![self.camera_translation[0], self.camera_translation[1]]
+    pub fn get_camera_translation(&self) -> Vec<f64> {
+        vec![self.camera_translation[0] as f64, self.camera_translation[1] as f64]
     }
 
     /// Start creating a shape with click and drag
@@ -501,6 +799,10 @@ impl WhiteboardCore {
                         *h = height;
                     }
                     ShapeType::Ellipse { width: w, height: h } => {
+                        *w = width;
+                        *h = height;
+                    }
+                    ShapeType::Widget { width: w, height: h, .. } => {
                         *w = width;
                         *h = height;
                     }
@@ -755,7 +1057,7 @@ impl WhiteboardCore {
             new_height: None,
         };
         match &shape.shape_type {
-            ShapeType::Rectangle { .. } | ShapeType::Ellipse { .. } => {
+            ShapeType::Rectangle { .. } | ShapeType::Ellipse { .. } | ShapeType::Widget { .. } => {
                 match handle_type {
                     ResizeHandle::TopLeft => {
                         let new_width = start_bounds.max_x - mouse_x;
@@ -1053,6 +1355,16 @@ impl WhiteboardCore {
                 ShapeType::Ellipse { width, height } => {
                     self.tessellate_ellipse_outline(&mut vertices, shape.position, *width, *height, shape.color, 2.0);
                 }
+                ShapeType::Widget { width, height, active, .. } => {
+                    // Render widget as a rectangle outline
+                    // Use different colors based on active state
+                    let widget_color = if *active {
+                        [0.2, 0.8, 1.0, 1.0] // Bright blue for active widgets
+                    } else {
+                        [0.6, 0.6, 0.6, 1.0] // Gray for inactive widgets
+                    };
+                    self.tessellate_rectangle_outline(&mut vertices, shape.position, *width, *height, widget_color, 2.0);
+                }
             }
         }
 
@@ -1173,6 +1485,9 @@ impl WhiteboardCore {
             }
             ShapeType::Ellipse { width, height } => {
                 self.tessellate_ellipse_outline(&mut *vertices, shape.position, *width, *height, outline_color, outline_width);
+            }
+            ShapeType::Widget { width, height, .. } => {
+                self.tessellate_rectangle_outline(&mut *vertices, shape.position, *width, *height, outline_color, outline_width);
             }
         }
     }

@@ -96,6 +96,28 @@ body {
   border-radius: 10px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
   z-index: 100;
+  animation: slideUp 0.4s ease-out;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+@keyframes widgetGlow {
+  0%, 100% { box-shadow: 0 2px 8px rgba(88, 101, 242, 0.4); }
+  50% { box-shadow: 0 2px 16px rgba(88, 101, 242, 0.8); }
 }
 
 /* Tool buttons - dark tldraw style */
@@ -124,6 +146,7 @@ body {
   background: #5865f2;
   color: white;
   box-shadow: 0 2px 8px rgba(88, 101, 242, 0.4);
+  animation: widgetGlow 2s ease-in-out infinite;
 }
 
 .tool-btn:disabled {

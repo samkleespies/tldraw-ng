@@ -1,4 +1,7 @@
 import { Component, createSignal, onMount, onCleanup } from 'solid-js';
+import { initializeCoordinateTransformer, getCoordinateTransformer } from './utils/coordinates';
+import OverlayContainer from './components/OverlayContainer';
+import { WidgetLinkingProvider } from './context/WidgetLinkingContext';
 
 // Message types for worker communication
 type MsgFromUI =
@@ -10,6 +13,7 @@ type MsgFromUI =
   | { type: 'wheel'; dx: number; dy: number }
   | { type: 'wheelZoom'; dx: number; dy: number; cursorX: number; cursorY: number }
   | { type: 'command'; name: 'undo' | 'redo' | 'duplicate' | 'deleteSelection' | 'clear' }
+  | { type: 'createWidget'; widgetType: 'monaco' | 'terminal' | 'preview' | 'chat' | 'explorer' | 'console'; x: number; y: number }
   | { type: 'toolChange'; tool: 'select' | 'rectangle' | 'ellipse' }
   | { type: 'startShapeCreation'; tool: 'rectangle' | 'ellipse'; x: number; y: number }
   | { type: 'updateShapeCreation'; x: number; y: number }
@@ -25,7 +29,7 @@ type MsgFromUI =
 //   | { type: 'shapeCountChanged'; count: number }
 //   | { type: 'error'; message: string };
 
-type Tool = 'select' | 'rectangle' | 'ellipse';
+type Tool = 'select' | 'rectangle' | 'ellipse' | 'monaco' | 'terminal' | 'preview' | 'chat' | 'explorer' | 'console';
 
 const App: Component = () => {
   // State signals
@@ -67,17 +71,29 @@ const App: Component = () => {
   const initializeWorker = async () => {
     try {
       setStatusMessage('Loading WASM...');
+      console.log('🔄 Starting WASM initialization...');
 
-      // Load WASM from public directory
-      const response = await fetch('/crates/core/pkg/core.js');
-      if (!response.ok) throw new Error('Failed to fetch WASM module');
-      const moduleText = await response.text();
-      const moduleBlob = new Blob([moduleText], { type: 'application/javascript' });
-      const moduleUrl = URL.createObjectURL(moduleBlob);
-      const wasmModule = await import(moduleUrl);
+      // Try to load WASM module with error handling
+      let wasmModule;
+      try {
+        wasmModule = await import('./wasm/core.js');
+        console.log('✅ WASM module loaded successfully');
+      } catch (importError) {
+        console.error('❌ Failed to import WASM module:', importError);
+        throw new Error(`Failed to import WASM module: ${importError.message}`);
+      }
 
       // Initialize WASM with the correct path to the .wasm file
-      await wasmModule.default('/crates/core/pkg/core_bg.wasm');
+      try {
+        // Import the WASM file as a URL
+        const wasmUrl = new URL('./wasm/core_bg.wasm', import.meta.url);
+        await wasmModule.default(wasmUrl);
+        console.log('✅ WASM initialized successfully');
+      } catch (initError) {
+        console.error('❌ Failed to initialize WASM:', initError);
+        throw new Error(`Failed to initialize WASM: ${initError.message}`);
+      }
+
       setStatusMessage('Creating core...');
 
       // Create core instance in main thread
@@ -113,6 +129,24 @@ const App: Component = () => {
 
       // Store core instance globally for event handlers
       (window as any).whiteboardCore = core;
+
+      // Initialize coordinate transformer
+      initializeCoordinateTransformer(core);
+      console.log('✅ Coordinate transformer initialized');
+
+      // Test coordinate transformation
+      const transformer = getCoordinateTransformer();
+      if (transformer) {
+        console.log('🧪 Testing coordinate transformation:');
+        console.log('Camera scale:', transformer.getScale());
+        console.log('Camera translation:', transformer.getTranslation());
+
+        // Test coordinate conversion
+        const testPoint = { x: 100, y: 100 };
+        const worldPoint = transformer.screenToWorld(testPoint.x, testPoint.y);
+        const backToScreen = transformer.worldToScreen(worldPoint.x, worldPoint.y);
+        console.log(`Screen ${testPoint.x},${testPoint.y} → World ${worldPoint.x.toFixed(2)},${worldPoint.y.toFixed(2)} → Screen ${backToScreen.x.toFixed(2)},${backToScreen.y.toFixed(2)}`);
+      }
 
       setIsInitialized(true);
       setStatusMessage('Ready');
@@ -194,8 +228,13 @@ const App: Component = () => {
           setIsDragging(core.is_dragging());
           core.render_frame();
         } else if (isWaitingForShapeCreation) {
-          // Mouse up without movement - create default shape
-          createShapeAtPosition(selectedTool(), shapeCreationStartPos.x, shapeCreationStartPos.y);
+          // Mouse up without movement - create default shape or widget
+          const tool = selectedTool();
+          if (tool === 'rectangle' || tool === 'ellipse') {
+            createShapeAtPosition(tool, shapeCreationStartPos.x, shapeCreationStartPos.y);
+          } else if (['monaco', 'terminal', 'preview', 'chat', 'explorer', 'console'].includes(tool)) {
+            createWidgetAtPosition(tool, shapeCreationStartPos.x, shapeCreationStartPos.y);
+          }
           isWaitingForShapeCreation = false;
         } else if (isCreatingShape()) {
           // Finish drag creation
@@ -285,6 +324,70 @@ const App: Component = () => {
 
     // Render the frame to make the shape visible immediately
     core.render_frame();
+  };
+
+  const createWidgetAtPosition = (widgetType: string, x: number, y: number) => {
+    const core = (window as any).whiteboardCore;
+    if (!core) return;
+
+    // Convert screen coordinates to world coordinates (same as in Rust core)
+    const camera_scale = core.get_camera_scale();
+    const camera_translation = core.get_camera_translation();
+    const world_x = (x / camera_scale) + camera_translation[0];
+    const world_y = (y / camera_scale) + camera_translation[1];
+
+    // Default widget dimensions
+    const width = 500;
+    const height = 400;
+
+    // Calculate position so widget center is at cursor position (in world coordinates)
+    const centerX = world_x - width / 2;
+    const centerY = world_y - height / 2;
+
+    switch (widgetType) {
+      case 'monaco':
+        core.create_monaco_widget(centerX, centerY, width, height, 'typescript', 'untitled.ts');
+        break;
+      case 'terminal':
+        core.create_terminal_widget(centerX, centerY, width, height, `session_${Date.now()}`);
+        break;
+      case 'preview':
+        core.create_preview_widget(centerX, centerY, width, height, 'http://localhost:3000', false);
+        break;
+      case 'chat':
+        core.create_chat_widget(centerX, centerY, width, height, `conv_${Date.now()}`);
+        break;
+      case 'explorer':
+        core.create_explorer_widget(centerX, centerY, width, height, '/workspace');
+        break;
+      case 'console':
+        core.create_console_widget(centerX, centerY, width, height, 'all');
+        break;
+    }
+
+    const newCount = core.shape_count();
+    setShapeCount(newCount);
+
+    // Render the frame to make the widget visible immediately
+    core.render_frame();
+
+    // Test coordinate transformation for the new widget
+    const transformer = getCoordinateTransformer();
+    if (transformer) {
+      // Get the widget ID (it should be the latest shape)
+      const shapeCount = core.shape_count();
+      console.log(`🧪 Testing widget coordinate transformation for widget ID: ${shapeCount}`);
+
+      // Test getting widget bounds
+      setTimeout(() => {
+        const widgetBounds = transformer.getWidgetScreenBounds(shapeCount);
+        if (widgetBounds) {
+          console.log('Widget screen bounds:', widgetBounds);
+          const domBounds = transformer.screenBoundsToDOM(widgetBounds);
+          console.log('Widget DOM bounds:', domBounds);
+        }
+      }, 100); // Small delay to ensure widget is created
+    }
   };
 
   const handleCoreCommand = (command: string) => {
@@ -461,7 +564,7 @@ const App: Component = () => {
     }
 
     // Prevent default for our handled keys
-    const handled = ['v', 'r', 'o', 'Delete', 'Backspace', 'Escape'].includes(e.key.toLowerCase());
+    const handled = ['v', 'r', 'o', 'm', 't', 'p', 'c', 'e', 'l', 'Delete', 'Backspace', 'Escape'].includes(e.key.toLowerCase());
     if (handled) {
       e.preventDefault();
     }
@@ -475,6 +578,24 @@ const App: Component = () => {
         break;
       case 'o':
         setSelectedTool('ellipse');
+        break;
+      case 'm':
+        setSelectedTool('monaco');
+        break;
+      case 't':
+        setSelectedTool('terminal');
+        break;
+      case 'p':
+        setSelectedTool('preview');
+        break;
+      case 'c':
+        setSelectedTool('chat');
+        break;
+      case 'e':
+        setSelectedTool('explorer');
+        break;
+      case 'l':
+        setSelectedTool('console');
         break;
       case 'delete':
       case 'backspace':
@@ -519,7 +640,8 @@ const App: Component = () => {
   });
 
   return (
-    <div class="app">
+    <WidgetLinkingProvider>
+      <div class="app">
       {/* Canvas - full screen */}
       <div class="canvas-container">
         <canvas
@@ -534,6 +656,9 @@ const App: Component = () => {
           onPointerUp={handleCanvasPointerUp}
           onWheel={handleCanvasWheel}
         />
+
+        {/* Widget Overlay Container */}
+        <OverlayContainer canvasRef={canvasRef} />
       </div>
 
       {/* Status indicator - top left */}
@@ -585,6 +710,83 @@ const App: Component = () => {
 
         <div class="tool-separator" />
 
+        {/* Widget Tools */}
+        <button
+          class={`tool-btn ${selectedTool() === 'monaco' ? 'active' : ''}`}
+          onClick={() => handleToolChange('monaco')}
+          disabled={!isInitialized()}
+          title="Code Editor (M)"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="16,18 22,12 16,6"/>
+            <polyline points="8,6 2,12 8,18"/>
+          </svg>
+        </button>
+
+        <button
+          class={`tool-btn ${selectedTool() === 'terminal' ? 'active' : ''}`}
+          onClick={() => handleToolChange('terminal')}
+          disabled={!isInitialized()}
+          title="Terminal (T)"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 5L9 12L4 19"/>
+            <path d="M11 19H20"/>
+          </svg>
+        </button>
+
+        <button
+          class={`tool-btn ${selectedTool() === 'preview' ? 'active' : ''}`}
+          onClick={() => handleToolChange('preview')}
+          disabled={!isInitialized()}
+          title="Preview (P)"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <rect x="3" y="5" width="18" height="14" rx="2"/>
+            <line x1="3" y1="8" x2="21" y2="8"/>
+          </svg>
+        </button>
+
+        <button
+          class={`tool-btn ${selectedTool() === 'chat' ? 'active' : ''}`}
+          onClick={() => handleToolChange('chat')}
+          disabled={!isInitialized()}
+          title="AI Chat (C)"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M20 6C20 4.343 18.657 3 17 3H7C5.343 3 4 4.343 4 6V14C4 15.657 5.343 17 7 17H8V21L12 17H17C18.657 17 20 15.657 20 14V6Z"/>
+          </svg>
+        </button>
+
+        <button
+          class={`tool-btn ${selectedTool() === 'explorer' ? 'active' : ''}`}
+          onClick={() => handleToolChange('explorer')}
+          disabled={!isInitialized()}
+          title="File Explorer (E)"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M3 6C3 4.895 3.895 4 5 4H10L12 6H19C20.105 6 21 6.895 21 8V17C21 18.105 20.105 19 19 19H5C3.895 19 3 18.105 3 17V6Z"/>
+          </svg>
+        </button>
+
+        <button
+          class={`tool-btn ${selectedTool() === 'console' ? 'active' : ''}`}
+          onClick={() => handleToolChange('console')}
+          disabled={!isInitialized()}
+          title="Console (L)"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <rect x="8" y="7" width="8" height="10" rx="3"/>
+            <circle cx="12" cy="5" r="2"/>
+            <path d="M5 10L8 11"/>
+            <path d="M5 14L8 13"/>
+            <path d="M19 10L16 11"/>
+            <path d="M19 14L16 13"/>
+          </svg>
+        </button>
+
+        <div class="tool-separator" />
+
         <button
           class="tool-btn"
           onClick={() => handleCommand('clear')}
@@ -623,6 +825,7 @@ const App: Component = () => {
         </button>
       </div>
     </div>
+    </WidgetLinkingProvider>
   );
 };
 
