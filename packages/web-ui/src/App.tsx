@@ -5,12 +5,16 @@ type MsgFromUI =
   | { type: 'init'; canvas: OffscreenCanvas; devicePixelRatio: number }
   | { type: 'resize'; width: number; height: number }
   | { type: 'pointerMove'; x: number; y: number; buttons: number }
-  | { type: 'pointerDown'; x: number; y: number; buttons: number }
+  | { type: 'pointerDown'; x: number; y: number; buttons: number; ctrlKey?: boolean }
   | { type: 'pointerUp'; x: number; y: number }
   | { type: 'wheel'; dx: number; dy: number }
   | { type: 'wheelZoom'; dx: number; dy: number; cursorX: number; cursorY: number }
   | { type: 'command'; name: 'undo' | 'redo' | 'duplicate' | 'deleteSelection' | 'clear' }
   | { type: 'toolChange'; tool: 'select' | 'rectangle' | 'ellipse' }
+  | { type: 'startShapeCreation'; tool: 'rectangle' | 'ellipse'; x: number; y: number }
+  | { type: 'updateShapeCreation'; x: number; y: number }
+  | { type: 'finishShapeCreation' }
+  | { type: 'cancelShapeCreation' }
   | { type: 'createShape'; tool: 'rectangle' | 'ellipse'; x: number; y: number; width?: number; height?: number }
   | { type: 'panCamera'; dx: number; dy: number };
 
@@ -34,10 +38,13 @@ const App: Component = () => {
   const [isHoveringShape, setIsHoveringShape] = createSignal(false);
   const [resizeCursor, setResizeCursor] = createSignal('default');
   const [isPanning, setIsPanning] = createSignal(false);
+  const [isCreatingShape, setIsCreatingShape] = createSignal(false);
 
   let canvasRef: HTMLCanvasElement | undefined;
   let worker: Worker | null = null;
   let isMiddleMouseDown = false;
+  let shapeCreationStartPos = { x: 0, y: 0 };
+  let isWaitingForShapeCreation = false;
 
   onMount(() => {
     initializeWorker();
@@ -130,11 +137,9 @@ const App: Component = () => {
           core.handle_pointer_down(msg.x, msg.y, msg.ctrlKey || false);
           setSelectedCount(core.selected_count());
           setIsDragging(core.is_dragging());
-        } else {
-          // Create shape at pointer location
-          createShapeAtPosition(selectedTool(), msg.x, msg.y);
+          core.render_frame();
         }
-        core.render_frame();
+        // For shape tools, we don't do anything on mouse down - wait for move or up
         break;
 
       case 'pointerMove':
@@ -142,16 +147,55 @@ const App: Component = () => {
           // Update hover state and cursor
           setIsHoveringShape(core.is_point_over_shape(msg.x, msg.y));
           setResizeCursor(core.get_resize_cursor(msg.x, msg.y));
+          core.handle_pointer_move(msg.x, msg.y);
+          setIsDragging(core.is_dragging());
+          core.render_frame();
+        } else if (isWaitingForShapeCreation) {
+          // Check if we've moved enough to start drag creation
+          const dragDistance = Math.sqrt(
+            Math.pow(msg.x - shapeCreationStartPos.x, 2) +
+            Math.pow(msg.y - shapeCreationStartPos.y, 2)
+          );
+
+          if (dragDistance > 3) { // 3px tolerance for tiny movements
+            // Start drag creation on significant movement
+            sendToCore({
+              type: 'startShapeCreation',
+              tool: selectedTool(),
+              x: shapeCreationStartPos.x,
+              y: shapeCreationStartPos.y
+            });
+            isWaitingForShapeCreation = false;
+            // Then update with current position
+            sendToCore({
+              type: 'updateShapeCreation',
+              x: msg.x,
+              y: msg.y
+            });
+          }
+        } else if (isCreatingShape()) {
+          // Continue updating shape creation
+          sendToCore({
+            type: 'updateShapeCreation',
+            x: msg.x,
+            y: msg.y
+          });
         }
-        core.handle_pointer_move(msg.x, msg.y);
-        setIsDragging(core.is_dragging());
-        core.render_frame();
         break;
 
       case 'pointerUp':
-        core.handle_pointer_up(msg.x, msg.y);
-        setIsDragging(core.is_dragging());
-        core.render_frame();
+        if (selectedTool() === 'select') {
+          core.handle_pointer_up(msg.x, msg.y);
+          setIsDragging(core.is_dragging());
+          core.render_frame();
+        } else if (isWaitingForShapeCreation) {
+          // Mouse up without movement - create default shape
+          createShapeAtPosition(selectedTool(), shapeCreationStartPos.x, shapeCreationStartPos.y);
+          isWaitingForShapeCreation = false;
+        } else if (isCreatingShape()) {
+          // Finish drag creation
+          sendToCore({ type: 'finishShapeCreation' });
+        }
         break;
 
       case 'wheel':
@@ -166,6 +210,32 @@ const App: Component = () => {
 
       case 'command':
         handleCoreCommand(msg.name);
+        break;
+
+      case 'startShapeCreation':
+        core.start_shape_creation(msg.x, msg.y, msg.tool);
+        setIsCreatingShape(true);
+        core.render_frame();
+        break;
+
+      case 'updateShapeCreation':
+        core.update_shape_creation(msg.x, msg.y);
+        core.render_frame();
+        break;
+
+      case 'finishShapeCreation':
+        const shapeId = core.finish_shape_creation();
+        if (shapeId) {
+          setShapeCount(core.shape_count());
+        }
+        setIsCreatingShape(false);
+        core.render_frame();
+        break;
+
+      case 'cancelShapeCreation':
+        core.cancel_shape_creation();
+        setIsCreatingShape(false);
+        core.render_frame();
         break;
 
       case 'panCamera':
@@ -207,6 +277,9 @@ const App: Component = () => {
 
     const newCount = core.shape_count();
     setShapeCount(newCount);
+
+    // Render the frame to make the shape visible immediately
+    core.render_frame();
   };
 
   const handleCoreCommand = (command: string) => {
@@ -246,6 +319,12 @@ const App: Component = () => {
       return;
     }
 
+    // Store creation start info for shape tools
+    if (selectedTool() !== 'select') {
+      shapeCreationStartPos = { x, y };
+      isWaitingForShapeCreation = true;
+    }
+
     sendToCore({
       type: 'pointerDown',
       x,
@@ -270,6 +349,8 @@ const App: Component = () => {
       });
       return;
     }
+
+    // No need for drag distance calculation - we handle it in the message processing
 
     sendToCore({
       type: 'pointerMove',

@@ -162,6 +162,12 @@ pub struct WhiteboardCore {
     is_selection_dragging: bool,
     selection_start: Option<Point>,
     selection_current: Option<Point>,
+    // Shape creation state
+    is_creating_shape: bool,
+    creation_start: Option<Point>,
+    creation_current: Option<Point>,
+    creation_shape_type: Option<String>,
+    creation_shape_id: Option<ShapeId>,
 }
 
 #[wasm_bindgen]
@@ -188,6 +194,12 @@ impl WhiteboardCore {
             is_selection_dragging: false,
             selection_start: None,
             selection_current: None,
+            // Shape creation state
+            is_creating_shape: false,
+            creation_start: None,
+            creation_current: None,
+            creation_shape_type: None,
+            creation_shape_id: None,
         }
     }
 
@@ -323,6 +335,120 @@ impl WhiteboardCore {
     #[wasm_bindgen]
     pub fn get_camera_translation(&self) -> Vec<f32> {
         vec![self.camera_translation[0], self.camera_translation[1]]
+    }
+
+    /// Start creating a shape with click and drag
+    #[wasm_bindgen]
+    pub fn start_shape_creation(&mut self, x: f64, y: f64, shape_type: &str) {
+        // Convert screen coordinates to world coordinates
+        let world_x = (x / self.camera_scale as f64) + self.camera_translation[0] as f64;
+        let world_y = (y / self.camera_scale as f64) + self.camera_translation[1] as f64;
+
+        self.is_creating_shape = true;
+        self.creation_start = Some(Point { x: world_x, y: world_y });
+        self.creation_current = Some(Point { x: world_x, y: world_y });
+        self.creation_shape_type = Some(shape_type.to_string());
+
+        // Create a minimal shape that will be resized
+        let id = ShapeId(self.next_id);
+        self.next_id += 1;
+
+        let shape = match shape_type {
+            "rectangle" => Shape {
+                id,
+                position: Point { x: world_x, y: world_y },
+                shape_type: ShapeType::Rectangle { width: 1.0, height: 1.0 },
+                color: [0.2, 0.8, 0.2, 1.0], // Green
+            },
+            "ellipse" => Shape {
+                id,
+                position: Point { x: world_x, y: world_y },
+                shape_type: ShapeType::Ellipse { width: 1.0, height: 1.0 },
+                color: [1.0, 0.2, 0.2, 1.0], // Red
+            },
+            _ => return, // Unknown shape type
+        };
+
+        self.shapes.insert(id, shape);
+        self.creation_shape_id = Some(id);
+    }
+
+    /// Update shape creation during drag
+    #[wasm_bindgen]
+    pub fn update_shape_creation(&mut self, x: f64, y: f64) {
+        if !self.is_creating_shape {
+            return;
+        }
+
+        // Convert screen coordinates to world coordinates
+        let world_x = (x / self.camera_scale as f64) + self.camera_translation[0] as f64;
+        let world_y = (y / self.camera_scale as f64) + self.camera_translation[1] as f64;
+
+        self.creation_current = Some(Point { x: world_x, y: world_y });
+
+        // Update the existing shape in real-time
+        if let (Some(start), Some(shape_id)) = (self.creation_start, self.creation_shape_id) {
+            if let Some(shape) = self.shapes.get_mut(&shape_id) {
+                // Calculate new dimensions and position
+                let width = (world_x - start.x).abs().max(10.0);
+                let height = (world_y - start.y).abs().max(10.0);
+                let new_x = start.x.min(world_x);
+                let new_y = start.y.min(world_y);
+
+                // Update the shape
+                shape.position = Point { x: new_x, y: new_y };
+                match &mut shape.shape_type {
+                    ShapeType::Rectangle { width: w, height: h } => {
+                        *w = width;
+                        *h = height;
+                    }
+                    ShapeType::Ellipse { width: w, height: h } => {
+                        *w = width;
+                        *h = height;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Finish shape creation and finalize the existing shape
+    #[wasm_bindgen]
+    pub fn finish_shape_creation(&mut self) -> Option<u32> {
+        if !self.is_creating_shape {
+            return None;
+        }
+
+        let shape_id = self.creation_shape_id?;
+
+        // Reset creation state
+        self.is_creating_shape = false;
+        self.creation_start = None;
+        self.creation_current = None;
+        self.creation_shape_type = None;
+        self.creation_shape_id = None;
+
+        Some(shape_id.0)
+    }
+
+    /// Cancel shape creation
+    #[wasm_bindgen]
+    pub fn cancel_shape_creation(&mut self) {
+        // Remove the shape if it was created
+        if let Some(shape_id) = self.creation_shape_id {
+            self.shapes.remove(&shape_id);
+        }
+
+        self.is_creating_shape = false;
+        self.creation_start = None;
+        self.creation_current = None;
+        self.creation_shape_type = None;
+        self.creation_shape_id = None;
+    }
+
+    /// Check if currently creating a shape
+    #[wasm_bindgen]
+    pub fn is_creating_shape(&self) -> bool {
+        self.is_creating_shape
     }
 
     /// Get cursor type for resize handle at position (for cursor feedback)
@@ -773,8 +899,10 @@ impl WhiteboardCore {
             }
         }
 
+        // No need for preview rendering - we modify the actual shape in real-time
+
         // Render resize handles on top
-        if !self.is_dragging && !self.is_resizing && !self.is_selection_dragging {
+        if !self.is_dragging && !self.is_resizing && !self.is_selection_dragging && !self.is_creating_shape {
             let handles = self.get_resize_handles();
             for handle in handles {
                 self.tessellate_resize_handle(&mut vertices, handle);
@@ -940,6 +1068,8 @@ impl WhiteboardCore {
             ]);
         }
     }
+
+
 
 
 
