@@ -161,7 +161,7 @@ const App: Component = () => {
     const core = (window as any).whiteboardCore;
     if (!core) return;
 
-    const defaultSize = 100;
+    const defaultSize = 200; // Increased from 100 to make shapes more visible
 
     console.log(`Creating ${tool} at (${x}, ${y}) with size ${defaultSize}`);
 
@@ -368,7 +368,9 @@ const App: Component = () => {
           disabled={!isInitialized()}
           title="Select (V)"
         >
-          ↖
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M14.082 2.182a.5.5 0 0 1 .103.557L8.528 15.467a.5.5 0 0 1-.917-.007L5.57 10.694.803 8.652a.5.5 0 0 1-.006-.916l12.728-5.657a.5.5 0 0 1 .556.103z"/>
+          </svg>
         </button>
 
         <div class="tool-separator" />
@@ -379,7 +381,9 @@ const App: Component = () => {
           disabled={!isInitialized()}
           title="Rectangle (R)"
         >
-          ▭
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="3" y="4" width="10" height="8" rx="1"/>
+          </svg>
         </button>
 
         <button
@@ -388,7 +392,9 @@ const App: Component = () => {
           disabled={!isInitialized()}
           title="Ellipse (O)"
         >
-          ○
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <ellipse cx="8" cy="8" rx="5" ry="4"/>
+          </svg>
         </button>
 
         <button
@@ -397,7 +403,9 @@ const App: Component = () => {
           disabled={!isInitialized()}
           title="Line (L)"
         >
-          ╱
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <line x1="3" y1="13" x2="13" y2="3"/>
+          </svg>
         </button>
 
         <div class="tool-separator" />
@@ -408,7 +416,9 @@ const App: Component = () => {
           disabled={!isInitialized() || shapeCount() === 0}
           title="Clear All"
         >
-          🗑
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M3 6h10l-1 8H4L3 6zM5 6V4a1 1 0 011-1h4a1 1 0 011 1v2M7 9v3M9 9v3"/>
+          </svg>
         </button>
       </div>
     </div>

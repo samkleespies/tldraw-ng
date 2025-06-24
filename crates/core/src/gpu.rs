@@ -286,9 +286,9 @@ impl GpuState {
                     ops: wgpu::Operations {
                         load: if clear {
                             wgpu::LoadOp::Clear(wgpu::Color {
-                                r: 0.95,
-                                g: 0.95,
-                                b: 0.95,
+                                r: 0.10,
+                                g: 0.10,
+                                b: 0.10,
                                 a: 1.0,
                             })
                         } else {
