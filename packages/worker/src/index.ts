@@ -179,7 +179,7 @@ function createShapeAtPosition(tool: string, x: number, y: number) {
 
 function createShape(msg: any) {
   if (!core) return;
-  
+
   switch (msg.tool) {
     case 'rectangle':
       core.create_rectangle(msg.x, msg.y, msg.width || 100, msg.height || 100);
@@ -187,11 +187,8 @@ function createShape(msg: any) {
     case 'ellipse':
       core.create_ellipse(msg.x, msg.y, msg.width || 100, msg.height || 100);
       break;
-    case 'line':
-      core.create_line(msg.x, msg.y, msg.endX || msg.x + 100, msg.endY || msg.y + 100);
-      break;
   }
-  
+
   notifyShapeCountChanged();
 }
 

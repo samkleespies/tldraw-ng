@@ -47,7 +47,6 @@ impl Point {
 pub enum ShapeType {
     Rectangle { width: f64, height: f64 },
     Ellipse { width: f64, height: f64 },
-    Line { end: Point },
 }
 
 /// A shape on the whiteboard
@@ -95,7 +94,6 @@ struct ResizeData {
     new_position: Option<Point>,
     new_width: Option<f64>,
     new_height: Option<f64>,
-    new_end: Option<Point>,
 }
 
 /// Apply resize data to a shape
@@ -111,11 +109,6 @@ fn apply_resize(shape: &mut Shape, resize_data: ResizeData) {
             }
             if let Some(new_height) = resize_data.new_height {
                 *height = new_height;
-            }
-        }
-        ShapeType::Line { end } => {
-            if let Some(new_end) = resize_data.new_end {
-                *end = new_end;
             }
         }
     }
@@ -135,20 +128,13 @@ impl Shape {
     pub fn bounding_box(&self) -> BoundingBox {
         let x = self.position.x;
         let y = self.position.y;
-        
+
         match &self.shape_type {
             ShapeType::Rectangle { width, height } => {
                 BoundingBox::new(x, y, x + width, y + height)
             }
             ShapeType::Ellipse { width, height } => {
                 BoundingBox::new(x, y, x + width, y + height)
-            }
-            ShapeType::Line { end } => {
-                let min_x = x.min(end.x);
-                let max_x = x.max(end.x);
-                let min_y = y.min(end.y);
-                let max_y = y.max(end.y);
-                BoundingBox::new(min_x, min_y, max_x, max_y)
             }
         }
     }
@@ -265,22 +251,7 @@ impl WhiteboardCore {
         id.0
     }
 
-    /// Create a new line shape
-    #[wasm_bindgen]
-    pub fn create_line(&mut self, x1: f64, y1: f64, x2: f64, y2: f64) -> u32 {
-        let id = ShapeId(self.next_id);
-        self.next_id += 1;
 
-        let shape = Shape {
-            id,
-            position: Point { x: x1, y: y1 },
-            shape_type: ShapeType::Line { end: Point { x: x2, y: y2 } },
-            color: [0.8, 0.2, 0.8, 1.0], // Purple
-        };
-
-        self.shapes.insert(id, shape);
-        id.0
-    }
 
     /// Delete a shape by ID
     #[wasm_bindgen]
@@ -479,7 +450,6 @@ impl WhiteboardCore {
             new_position: None,
             new_width: None,
             new_height: None,
-            new_end: None,
         };
         match &shape.shape_type {
             ShapeType::Rectangle { .. } | ShapeType::Ellipse { .. } => {
@@ -547,30 +517,7 @@ impl WhiteboardCore {
                     }
                 }
             }
-            ShapeType::Line { end } => {
-                // For lines, we'll resize by moving the end point
-                match handle_type {
-                    ResizeHandle::TopLeft | ResizeHandle::BottomLeft | ResizeHandle::Left => {
-                        // Move the start point
-                        resize_data.new_position = Some(Point { x: mouse_x, y: mouse_y });
-                    }
-                    ResizeHandle::TopRight | ResizeHandle::BottomRight | ResizeHandle::Right => {
-                        // Move the end point
-                        resize_data.new_end = Some(Point { x: mouse_x, y: mouse_y });
-                    }
-                    ResizeHandle::Top | ResizeHandle::Bottom => {
-                        // For top/bottom handles on lines, move the closest endpoint
-                        let start_dist = (mouse_y - shape.position.y).abs();
-                        let end_dist = (mouse_y - end.y).abs();
 
-                        if start_dist < end_dist {
-                            resize_data.new_position = Some(Point { x: shape.position.x, y: mouse_y });
-                        } else {
-                            resize_data.new_end = Some(Point { x: end.x, y: mouse_y });
-                        }
-                    }
-                }
-            }
         }
 
         resize_data
@@ -763,9 +710,6 @@ impl WhiteboardCore {
                 ShapeType::Ellipse { width, height } => {
                     self.tessellate_ellipse(&mut vertices, shape.position, *width, *height, shape.color);
                 }
-                ShapeType::Line { end } => {
-                    self.tessellate_line(&mut vertices, shape.position, *end, shape.color);
-                }
             }
         }
 
@@ -833,34 +777,7 @@ impl WhiteboardCore {
         ]);
     }
 
-    fn tessellate_line(&self, vertices: &mut Vec<Vertex>, start: Point, end: Point, color: [f32; 4]) {
-        let x1 = start.x as f32;
-        let y1 = start.y as f32;
-        let x2 = end.x as f32;
-        let y2 = end.y as f32;
 
-        let thickness = 2.0;
-        let dx = x2 - x1;
-        let dy = y2 - y1;
-        let length = (dx * dx + dy * dy).sqrt();
-
-        if length > 0.0 {
-            let nx = -dy / length * thickness / 2.0;
-            let ny = dx / length * thickness / 2.0;
-
-            // Line as a rectangle
-            vertices.extend_from_slice(&[
-                // Triangle 1
-                Vertex { position: [x1 + nx, y1 + ny], color, uv: [0.0, 0.0], shape_type: 2.0 },
-                Vertex { position: [x2 + nx, y2 + ny], color, uv: [1.0, 0.0], shape_type: 2.0 },
-                Vertex { position: [x1 - nx, y1 - ny], color, uv: [0.0, 1.0], shape_type: 2.0 },
-                // Triangle 2
-                Vertex { position: [x2 + nx, y2 + ny], color, uv: [1.0, 0.0], shape_type: 2.0 },
-                Vertex { position: [x2 - nx, y2 - ny], color, uv: [1.0, 1.0], shape_type: 2.0 },
-                Vertex { position: [x1 - nx, y1 - ny], color, uv: [0.0, 1.0], shape_type: 2.0 },
-            ]);
-        }
-    }
 
     fn tessellate_resize_handle(&self, vertices: &mut Vec<Vertex>, handle: ResizeHandleInfo) {
         let x = handle.position.x as f32;
@@ -908,12 +825,6 @@ impl WhiteboardCore {
             }
             ShapeType::Ellipse { width, height } => {
                 self.tessellate_ellipse_outline(&mut *vertices, shape.position, *width, *height, outline_color, outline_width);
-            }
-            ShapeType::Line { end } => {
-                // For lines, make them slightly thicker when selected
-                let thick_line_color = outline_color;
-                let thick_line_width = 4.0;
-                self.tessellate_thick_line(&mut *vertices, shape.position, *end, thick_line_color, thick_line_width);
             }
         }
     }
@@ -984,33 +895,7 @@ impl WhiteboardCore {
         }
     }
 
-    fn tessellate_thick_line(&self, vertices: &mut Vec<Vertex>, start: Point, end: Point, color: [f32; 4], thickness: f32) {
-        let x1 = start.x as f32;
-        let y1 = start.y as f32;
-        let x2 = end.x as f32;
-        let y2 = end.y as f32;
 
-        let dx = x2 - x1;
-        let dy = y2 - y1;
-        let length = (dx * dx + dy * dy).sqrt();
-
-        if length > 0.0 {
-            let nx = -dy / length * thickness / 2.0;
-            let ny = dx / length * thickness / 2.0;
-
-            // Line as a rectangle
-            vertices.extend_from_slice(&[
-                // Triangle 1
-                Vertex { position: [x1 + nx, y1 + ny], color, uv: [0.0, 0.0], shape_type: 2.0 },
-                Vertex { position: [x2 + nx, y2 + ny], color, uv: [1.0, 0.0], shape_type: 2.0 },
-                Vertex { position: [x1 - nx, y1 - ny], color, uv: [0.0, 1.0], shape_type: 2.0 },
-                // Triangle 2
-                Vertex { position: [x2 + nx, y2 + ny], color, uv: [1.0, 0.0], shape_type: 2.0 },
-                Vertex { position: [x2 - nx, y2 - ny], color, uv: [1.0, 1.0], shape_type: 2.0 },
-                Vertex { position: [x1 - nx, y1 - ny], color, uv: [0.0, 1.0], shape_type: 2.0 },
-            ]);
-        }
-    }
 
     fn tessellate_selection_rectangle(&self, vertices: &mut Vec<Vertex>, start: Point, end: Point) {
         let min_x = start.x.min(end.x) as f32;

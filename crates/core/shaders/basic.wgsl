@@ -51,7 +51,7 @@ fn vs_main(vertex: VertexInput) -> VertexOutput {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var final_color = in.color;
-    
+
     // Shape-specific rendering
     if (in.shape_type < 0.5) {
         // Rectangle (shape_type = 0.0)
@@ -64,10 +64,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             discard;
         }
         final_color = in.color;
-    } else {
-        // Line (shape_type = 2.0)
-        final_color = in.color;
     }
-    
+
     return final_color;
 }

@@ -9,8 +9,8 @@ type MsgFromUI =
   | { type: 'pointerUp'; x: number; y: number }
   | { type: 'wheel'; dx: number; dy: number }
   | { type: 'command'; name: 'undo' | 'redo' | 'duplicate' | 'deleteSelection' | 'clear' }
-  | { type: 'toolChange'; tool: 'select' | 'rectangle' | 'ellipse' | 'line' }
-  | { type: 'createShape'; tool: 'rectangle' | 'ellipse' | 'line'; x: number; y: number; width?: number; height?: number; endX?: number; endY?: number }
+  | { type: 'toolChange'; tool: 'select' | 'rectangle' | 'ellipse' }
+  | { type: 'createShape'; tool: 'rectangle' | 'ellipse'; x: number; y: number; width?: number; height?: number }
   | { type: 'panCamera'; dx: number; dy: number };
 
 type MsgFromWorker =
@@ -19,7 +19,7 @@ type MsgFromWorker =
   | { type: 'shapeCountChanged'; count: number }
   | { type: 'error'; message: string };
 
-type Tool = 'select' | 'rectangle' | 'ellipse' | 'line';
+type Tool = 'select' | 'rectangle' | 'ellipse';
 
 const App: Component = () => {
   // State signals
@@ -190,13 +190,6 @@ const App: Component = () => {
         console.log(`Creating red circle at (${centerX}, ${centerY}) with size ${defaultSize}`);
         core.create_ellipse(centerX, centerY, defaultSize, defaultSize);
         break;
-      case 'line':
-        // Create a line centered on the click point
-        const lineLength = defaultSize * 0.8; // Slightly shorter than square
-        const halfLength = lineLength / 2;
-        console.log(`Creating line from (${x - halfLength}, ${y - halfLength}) to (${x + halfLength}, ${y + halfLength})`);
-        core.create_line(x - halfLength, y - halfLength, x + halfLength, y + halfLength);
-        break;
     }
 
     const newCount = core.shape_count();
@@ -308,7 +301,7 @@ const App: Component = () => {
     if (!isInitialized()) return;
 
     // Prevent default for our handled keys
-    const handled = ['v', 'r', 'o', 'l', 'Delete', 'Backspace', 'Escape'].includes(e.key.toLowerCase());
+    const handled = ['v', 'r', 'o', 'Delete', 'Backspace', 'Escape'].includes(e.key.toLowerCase());
     if (handled) {
       e.preventDefault();
     }
@@ -322,9 +315,6 @@ const App: Component = () => {
         break;
       case 'o':
         setSelectedTool('ellipse');
-        break;
-      case 'l':
-        setSelectedTool('line');
         break;
       case 'delete':
       case 'backspace':
@@ -430,17 +420,6 @@ const App: Component = () => {
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
             <circle cx="8" cy="8" r="4"/>
-          </svg>
-        </button>
-
-        <button
-          class={`tool-btn ${selectedTool() === 'line' ? 'active' : ''}`}
-          onClick={() => handleToolChange('line')}
-          disabled={!isInitialized()}
-          title="Line (L)"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-            <line x1="3" y1="13" x2="13" y2="3"/>
           </svg>
         </button>
 

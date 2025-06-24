@@ -8,8 +8,8 @@ export type MsgFromUI =
   | { type: 'pointerUp'; x: number; y: number }
   | { type: 'wheel'; dx: number; dy: number }
   | { type: 'command'; name: 'undo' | 'redo' | 'duplicate' | 'deleteSelection' | 'clear' }
-  | { type: 'toolChange'; tool: 'select' | 'rectangle' | 'ellipse' | 'line' }
-  | { type: 'createShape'; tool: 'rectangle' | 'ellipse' | 'line'; x: number; y: number; width?: number; height?: number; endX?: number; endY?: number }
+  | { type: 'toolChange'; tool: 'select' | 'rectangle' | 'ellipse' }
+  | { type: 'createShape'; tool: 'rectangle' | 'ellipse'; x: number; y: number; width?: number; height?: number }
   | { type: 'panCamera'; dx: number; dy: number };
 
 export type MsgFromWorker =
