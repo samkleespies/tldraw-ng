@@ -48,6 +48,35 @@ body {
   cursor: default;
 }
 
+.canvas.select-tool.hovering-shape {
+  cursor: pointer;
+}
+
+.canvas.select-tool.dragging {
+  cursor: grabbing;
+}
+
+.canvas.select-tool.resizing {
+  cursor: grabbing;
+}
+
+/* Resize cursors */
+.canvas.resize-nw {
+  cursor: nw-resize;
+}
+
+.canvas.resize-ne {
+  cursor: ne-resize;
+}
+
+.canvas.resize-ns {
+  cursor: ns-resize;
+}
+
+.canvas.resize-ew {
+  cursor: ew-resize;
+}
+
 /* Toolbar - dark tldraw style at bottom */
 .toolbar {
   position: absolute;

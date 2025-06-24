@@ -29,6 +29,9 @@ const App: Component = () => {
   const [shapeCount, setShapeCount] = createSignal(0);
   const [selectedCount, setSelectedCount] = createSignal(0);
   const [errorMessage, setErrorMessage] = createSignal<string | null>(null);
+  const [isDragging, setIsDragging] = createSignal(false);
+  const [isHoveringShape, setIsHoveringShape] = createSignal(false);
+  const [resizeCursor, setResizeCursor] = createSignal('default');
 
   let canvasRef: HTMLCanvasElement | undefined;
   let worker: Worker | null = null;
@@ -122,8 +125,9 @@ const App: Component = () => {
     switch (msg.type) {
       case 'pointerDown':
         if (selectedTool() === 'select') {
-          core.handle_pointer_down(msg.x, msg.y);
+          core.handle_pointer_down(msg.x, msg.y, msg.ctrlKey || false);
           setSelectedCount(core.selected_count());
+          setIsDragging(core.is_dragging());
         } else {
           // Create shape at pointer location
           createShapeAtPosition(selectedTool(), msg.x, msg.y);
@@ -132,12 +136,19 @@ const App: Component = () => {
         break;
 
       case 'pointerMove':
+        if (selectedTool() === 'select') {
+          // Update hover state and cursor
+          setIsHoveringShape(core.is_point_over_shape(msg.x, msg.y));
+          setResizeCursor(core.get_resize_cursor(msg.x, msg.y));
+        }
         core.handle_pointer_move(msg.x, msg.y);
+        setIsDragging(core.is_dragging());
         core.render_frame();
         break;
 
       case 'pointerUp':
         core.handle_pointer_up(msg.x, msg.y);
+        setIsDragging(core.is_dragging());
         core.render_frame();
         break;
 
@@ -171,12 +182,12 @@ const App: Component = () => {
     switch (tool) {
       case 'rectangle':
         // Create a perfect square
-        console.log(`Creating square at (${centerX}, ${centerY}) with size ${defaultSize}`);
+        console.log(`Creating green square at (${centerX}, ${centerY}) with size ${defaultSize}`);
         core.create_rectangle(centerX, centerY, defaultSize, defaultSize);
         break;
       case 'ellipse':
         // Create a perfect circle
-        console.log(`Creating circle at (${centerX}, ${centerY}) with size ${defaultSize}`);
+        console.log(`Creating red circle at (${centerX}, ${centerY}) with size ${defaultSize}`);
         core.create_ellipse(centerX, centerY, defaultSize, defaultSize);
         break;
       case 'line':
@@ -204,6 +215,15 @@ const App: Component = () => {
         setSelectedCount(core.selected_count());
         core.render_frame();
         break;
+      case 'deleteSelection':
+        const deletedCount = core.delete_selected();
+        if (deletedCount > 0) {
+          console.log(`Deleted ${deletedCount} selected shapes`);
+          setShapeCount(core.shape_count());
+          setSelectedCount(core.selected_count());
+          core.render_frame();
+        }
+        break;
     }
   };
 
@@ -224,7 +244,8 @@ const App: Component = () => {
       type: 'pointerDown',
       x,
       y,
-      buttons: e.buttons
+      buttons: e.buttons,
+      ctrlKey: e.ctrlKey || e.metaKey // Support both Ctrl (Windows/Linux) and Cmd (Mac)
     });
   };
 
@@ -353,7 +374,11 @@ const App: Component = () => {
       <div class="canvas-container">
         <canvas
           ref={canvasRef}
-          class={`canvas ${selectedTool() === 'select' ? 'select-tool' : ''}`}
+          class={`canvas ${selectedTool() === 'select' ? 'select-tool' : ''} ${
+            selectedTool() === 'select' && isHoveringShape() ? 'hovering-shape' : ''
+          } ${isDragging() ? 'dragging' : ''} ${
+            resizeCursor() !== 'default' ? `resize-${resizeCursor().replace('-resize', '')}` : ''
+          }`}
           onPointerDown={handleCanvasPointerDown}
           onPointerMove={handleCanvasPointerMove}
           onPointerUp={handleCanvasPointerUp}
