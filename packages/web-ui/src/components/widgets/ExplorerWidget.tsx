@@ -123,12 +123,14 @@ export const ExplorerWidget: Component<ExplorerWidgetProps> = (props) => {
   };
 
   /**
-   * Handle file selection
+   * Handle file selection - single click opens file in editor
    */
   const selectFile = (node: FileNode) => {
     if (node.type === 'file') {
       setSelectedFile(node.path);
       props.onFileSelect?.(node);
+      // Single-click opens file in editor (like canvas version)
+      openFileInEditor(node.path);
     } else {
       toggleFolder(node.path);
     }
@@ -216,13 +218,13 @@ export const ExplorerWidget: Component<ExplorerWidgetProps> = (props) => {
         onClick={() => selectFile(node)}
         onDblClick={() => handleFileDoubleClick(node)}
         onContextMenu={(e) => handleContextMenu(e, node)}
-        onMouseEnter={(e) => e.currentTarget.style.background = selectedFile() === node.path ? '#e3f2fd' : '#f5f5f5'}
-        onMouseLeave={(e) => e.currentTarget.style.background = selectedFile() === node.path ? '#e3f2fd' : 'transparent'}
+        onMouseEnter={(e) => e.currentTarget.style.background = selectedFile() === node.path ? '#264f78' : '#2a2d2e'}
+        onMouseLeave={(e) => e.currentTarget.style.background = selectedFile() === node.path ? '#264f78' : 'transparent'}
       >
         <span style="margin-right: 6px; font-size: 14px;">{getFileIcon(node)}</span>
-        <span style="flex: 1; font-size: 13px; color: #1a202c;">{node.name}</span>
+        <span style="flex: 1; font-size: 13px; color: #cccccc;">{node.name}</span>
         {node.type === 'file' && node.size && (
-          <span style="font-size: 11px; color: #6b7280; margin-left: 8px;">
+          <span style="font-size: 11px; color: #888888; margin-left: 8px;">
             {formatFileSize(node.size)}
           </span>
         )}
@@ -248,19 +250,20 @@ export const ExplorerWidget: Component<ExplorerWidgetProps> = (props) => {
           position: fixed;
           top: ${menu.y}px;
           left: ${menu.x}px;
-          background: white;
-          border: 1px solid #d1d5db;
+          background: #2d2d30;
+          border: 1px solid #3e3e42;
           border-radius: 6px;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
           z-index: 1000;
           min-width: 160px;
+          color: #cccccc;
         `}
         onClick={closeContextMenu}
       >
         <div style="padding: 4px 0;">
           <div
             style="padding: 8px 12px; cursor: pointer; font-size: 13px;"
-            onMouseEnter={(e) => e.currentTarget.style.background = '#f3f4f6'}
+            onMouseEnter={(e) => e.currentTarget.style.background = '#3e3e42'}
             onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
             onClick={() => {
               if (menu.node.type === 'file') {
@@ -271,18 +274,18 @@ export const ExplorerWidget: Component<ExplorerWidgetProps> = (props) => {
           >
             📝 Open in Monaco
           </div>
-          <div style="padding: 8px 12px; cursor: pointer; font-size: 13px;" onMouseEnter={(e) => e.currentTarget.style.background = '#f3f4f6'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+          <div style="padding: 8px 12px; cursor: pointer; font-size: 13px;" onMouseEnter={(e) => e.currentTarget.style.background = '#3e3e42'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
             📋 Copy Path
           </div>
-          <div style="height: 1px; background: #e5e7eb; margin: 4px 0;"></div>
-          <div style="padding: 8px 12px; cursor: pointer; font-size: 13px;" onMouseEnter={(e) => e.currentTarget.style.background = '#f3f4f6'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+          <div style="height: 1px; background: #3e3e42; margin: 4px 0;"></div>
+          <div style="padding: 8px 12px; cursor: pointer; font-size: 13px;" onMouseEnter={(e) => e.currentTarget.style.background = '#3e3e42'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
             📁 New File
           </div>
-          <div style="padding: 8px 12px; cursor: pointer; font-size: 13px;" onMouseEnter={(e) => e.currentTarget.style.background = '#f3f4f6'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+          <div style="padding: 8px 12px; cursor: pointer; font-size: 13px;" onMouseEnter={(e) => e.currentTarget.style.background = '#3e3e42'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
             📂 New Folder
           </div>
-          <div style="height: 1px; background: #e5e7eb; margin: 4px 0;"></div>
-          <div style="padding: 8px 12px; cursor: pointer; font-size: 13px; color: #dc2626;" onMouseEnter={(e) => e.currentTarget.style.background = '#fef2f2'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+          <div style="height: 1px; background: #3e3e42; margin: 4px 0;"></div>
+          <div style="padding: 8px 12px; cursor: pointer; font-size: 13px; color: #f87171;" onMouseEnter={(e) => e.currentTarget.style.background = '#3e3e42'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
             🗑️ Delete
           </div>
         </div>
@@ -291,15 +294,21 @@ export const ExplorerWidget: Component<ExplorerWidgetProps> = (props) => {
   };
 
   return (
-    <div 
-      style={`width: 100%; height: 100%; background: #fafafa; border-radius: 8px; overflow: hidden; ${!props.active ? 'pointer-events: none; opacity: 0.7;' : ''}`}
+    <div
+      style={`width: 100%; height: 100%; background: #1e1e1e; border-radius: 8px; overflow: hidden; ${!props.active ? 'pointer-events: none; opacity: 0.7;' : ''}`}
       onClick={closeContextMenu}
+      onWheel={(e) => {
+        // Allow Ctrl+wheel to bubble for canvas zoom, but prevent regular wheel from affecting canvas
+        if (!e.ctrlKey && !e.metaKey) {
+          e.stopPropagation();
+        }
+      }}
     >
       {/* Draggable Title Bar */}
       <div
         style="
-          background: #f1f5f9;
-          border-bottom: 1px solid #e2e8f0;
+          background: #2d2d30;
+          border-bottom: 1px solid #3e3e42;
           padding: 12px 16px;
           display: flex;
           align-items: center;
@@ -314,17 +323,17 @@ export const ExplorerWidget: Component<ExplorerWidgetProps> = (props) => {
           }
         }}
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#cccccc" stroke-width="2">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
         </svg>
-        <span style="font-weight: 600; font-size: 14px; color: #1a202c;">Explorer</span>
-        <span style="font-size: 12px; color: #6b7280; margin-left: auto;">{props.rootPath}</span>
+        <span style="font-weight: 600; font-size: 14px; color: #cccccc;">Explorer</span>
+        <span style="font-size: 12px; color: #888888; margin-left: auto;">{props.rootPath}</span>
       </div>
 
       {/* File Tree */}
       <div style="height: calc(100% - 49px); overflow-y: auto; padding: 8px 0;">
         {isLoading() ? (
-          <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #6b7280;">
+          <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #888888;">
             <div style="text-align: center;">
               <div style="margin-bottom: 8px;">📁</div>
               <div style="font-size: 13px;">Loading files...</div>

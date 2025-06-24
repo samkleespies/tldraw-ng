@@ -46,16 +46,16 @@ const defaultFileSystem: Record<string, string> = {
 
 export default App;`,
 
-  '/src/main.tsx': `import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App.tsx';
-import './index.css';
+  '/src/main.tsx': `import { render } from 'solid-js/web';
+import App from './App';
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);`,
+const root = document.getElementById('root');
+
+if (!root) {
+  throw new Error('Root element not found');
+}
+
+render(() => <App />, root);`,
 
   '/src/index.css': `body {
   margin: 0;
@@ -128,7 +128,7 @@ export const capitalize = (str: string): string => {
 };`,
 
   '/package.json': `{
-  "name": "vite-starter",
+  "name": "tldraw-ng-project",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -138,13 +138,12 @@ export const capitalize = (str: string): string => {
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "solid-js": "^1.8.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.2.0",
     "typescript": "^5.2.2",
-    "vite": "^5.0.0"
+    "vite": "^5.0.0",
+    "vite-plugin-solid": "^2.10.2"
   }
 }`,
 
@@ -153,7 +152,7 @@ export const capitalize = (str: string): string => {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vite App</title>
+    <title>tldraw-ng Project</title>
   </head>
   <body>
     <div id="root"></div>
@@ -162,11 +161,13 @@ export const capitalize = (str: string): string => {
 </html>`,
 
   '/vite.config.ts': `import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+import solid from 'vite-plugin-solid'
 
-// https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [solid()],
+  server: {
+    host: true,
+  },
 })`,
 
   '/tsconfig.json': `{
@@ -251,8 +252,9 @@ export function WidgetLinkingProvider(props: {
       ...prev,
       [filePath]: content
     }));
-    
+
     // Broadcast file change event
+    console.log('Broadcasting file-updated event:', filePath);
     window.dispatchEvent(new CustomEvent('file-updated', {
       detail: { filePath, content }
     }));

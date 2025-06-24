@@ -1,5 +1,6 @@
 import { Component, createSignal, onMount, onCleanup, createEffect } from 'solid-js';
 import { useWidgetLinking } from '../../context/WidgetLinkingContext';
+import { WebContainer } from '@webcontainer/api';
 
 // Configure Monaco environment to avoid worker issues
 if (typeof window !== 'undefined') {
@@ -39,8 +40,35 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
   const [error, setError] = createSignal<string | null>(null);
   const [currentFilePath, setCurrentFilePath] = createSignal(props.filePath);
   const [devServerUrl, setDevServerUrl] = createSignal('');
+  const [runStatus, setRunStatus] = createSignal<'idle' | 'booting' | 'installing' | 'running' | 'ready' | 'error'>('idle');
 
-  const { getFileContent, setFileContent, currentFile, handleTitleBarDrag } = useWidgetLinking();
+  const { getFileContent, setFileContent, currentFile, handleTitleBarDrag, fileSystem } = useWidgetLinking();
+
+  // WebContainer instance
+  let webcontainerInstance: WebContainer | null = null;
+
+  // Listen for file updates and sync to WebContainer
+  onMount(() => {
+    const handleFileUpdate = async (event: CustomEvent) => {
+      const { filePath, content } = event.detail;
+      if (webcontainerInstance && runStatus() === 'ready') {
+        try {
+          // Remove leading slash and write to WebContainer
+          const cleanPath = filePath.replace(/^\//, '');
+          await webcontainerInstance.fs.writeFile(cleanPath, content);
+          console.log('Updated WebContainer file:', cleanPath);
+        } catch (error) {
+          console.error('Error updating WebContainer file:', error);
+        }
+      }
+    };
+
+    window.addEventListener('file-updated', handleFileUpdate as EventListener);
+
+    onCleanup(() => {
+      window.removeEventListener('file-updated', handleFileUpdate as EventListener);
+    });
+  });
 
   let containerRef: HTMLDivElement | undefined;
   let editor: any = null;
@@ -173,9 +201,135 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
     }
   });
 
-  const handleRunProject = () => {
-    if (devServerUrl()) {
-      window.open(devServerUrl(), '_blank');
+  /**
+   * Create project files for WebContainer using Explorer's file system
+   */
+  const createDefaultFiles = () => {
+    const files = fileSystem();
+    const filesToMount: any = {};
+
+    // Helper to add file to mount structure
+    const addFile = (path: string, content: string) => {
+      const segments = path.replace(/^\/?/, '').split('/');
+      let pointer = filesToMount;
+      for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        if (i === segments.length - 1) {
+          pointer[seg] = { file: { contents: content } };
+        } else {
+          pointer[seg] = pointer[seg] || { directory: {} };
+          pointer = pointer[seg].directory;
+        }
+      }
+    };
+
+    // Add all files from Explorer's file system (the mini project)
+    Object.entries(files).forEach(([path, content]) => addFile(path, content));
+
+    // Only add essential build files if they don't exist in Explorer
+    // The Explorer already contains the actual project files (App.tsx, main.tsx, etc.)
+    if (!files['package.json']) {
+      addFile('package.json', JSON.stringify({
+        name: 'tldraw-ng-project',
+        version: '1.0.0',
+        type: 'module',
+        scripts: {
+          dev: 'vite --host',
+          build: 'vite build',
+          preview: 'vite preview',
+        },
+        dependencies: {
+          'solid-js': '^1.8.0',
+        },
+        devDependencies: {
+          typescript: '~5.8.3',
+          vite: '^6.3.5',
+          'vite-plugin-solid': '^2.10.2',
+        },
+      }, null, 2));
+    }
+
+    if (!files['vite.config.ts']) {
+      addFile('vite.config.ts', `import { defineConfig } from 'vite'
+import solid from 'vite-plugin-solid'
+
+export default defineConfig({
+  plugins: [solid()],
+  server: {
+    host: true,
+  },
+})`);
+    }
+
+    if (!files['index.html']) {
+      addFile('index.html', `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>tldraw-ng Project</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>`);
+    }
+
+    // Note: We don't add default src/main.tsx or src/App.tsx here anymore
+    // because the Explorer already contains the actual project files
+
+    return filesToMount;
+  };
+
+  /**
+   * Handle running the project with WebContainer
+   */
+  const handleRunProject = async () => {
+    if (runStatus() !== 'idle') return;
+
+    try {
+      setRunStatus('booting');
+
+      // Boot WebContainer
+      const wc = await WebContainer.boot();
+      webcontainerInstance = wc;
+
+      // Mount file system
+      const filesToMount = createDefaultFiles();
+      await wc.mount(filesToMount);
+
+      setRunStatus('installing');
+
+      // Install dependencies
+      const installProcess = await wc.spawn('npm', ['install']);
+      const installExitCode = await installProcess.exit;
+
+      if (installExitCode !== 0) {
+        setRunStatus('error');
+        return;
+      }
+
+      setRunStatus('running');
+
+      // Set up server-ready listener
+      wc.on('server-ready', (port, url) => {
+        console.log('Dev server ready:', url);
+        setDevServerUrl(url);
+        setRunStatus('ready');
+
+        // Dispatch event to notify preview widgets
+        window.dispatchEvent(new CustomEvent('dev-server-ready', {
+          detail: { url }
+        }));
+      });
+
+      // Start dev server
+      await wc.spawn('npm', ['run', 'dev']);
+
+    } catch (error) {
+      console.error('Error running project:', error);
+      setRunStatus('error');
     }
   };
 
@@ -223,36 +377,20 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
    */
   const getInitialContent = (): string => {
     const filePath = currentFilePath();
+
+    // If no file is selected (default untitled.ts), show empty content
+    if (!filePath || filePath === 'untitled.ts') {
+      return '';
+    }
+
     const existingContent = getFileContent(filePath);
 
     if (existingContent && existingContent !== `// File not found: ${filePath}`) {
       return existingContent;
     }
 
-    // Use simple React template like canvas project
-    if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx')) {
-      return `function App() {
-  return (
-    <div style={{
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-      height: '100vh',
-      fontFamily: 'Arial, sans-serif',
-      fontSize: '2rem',
-      backgroundColor: '#121212',
-      color: '#ffffff'
-    }}>
-      Hello World!
-    </div>
-  );
-}
-
-export default App;`;
-    }
-
-    return `// ${filePath}
-console.log('Hello World!');`;
+    // If file doesn't exist in the file system, return empty content
+    return '';
   };
 
   /**
@@ -304,6 +442,12 @@ console.log('Hello World!');`;
         flex-direction: column;
         ${!props.active ? 'pointer-events: none; opacity: 0.7;' : ''}
       `}
+      onWheel={(e) => {
+        // Allow Ctrl+wheel to bubble for canvas zoom, but prevent regular wheel from affecting canvas
+        if (!e.ctrlKey && !e.metaKey) {
+          e.stopPropagation();
+        }
+      }}
     >
       {/* Draggable Title Bar */}
       <div
@@ -327,25 +471,39 @@ console.log('Hello World!');`;
           }
         }}
       >
-        <span>{currentFilePath().split('/').pop() || 'App.tsx'}</span>
+        <span>
+          {(() => {
+            const filePath = currentFilePath();
+            if (!filePath || filePath === 'untitled.ts') {
+              return 'Code Editor';
+            }
+            return filePath.split('/').pop() || 'Code Editor';
+          })()}
+        </span>
         <div style="display: flex; gap: 8px;">
           {!isLoaded() && <span style="font-size: 12px;">Loading...</span>}
           {isLoaded() && (
             <button
               onClick={handleRunProject}
               onMouseDown={(e) => e.stopPropagation()} // Prevent drag when clicking button
-              style="
-                background-color: #0e639c;
+              style={`
+                background-color: ${runStatus() === 'ready' ? '#4CAF50' : runStatus() === 'error' ? '#f44336' : '#0e639c'};
                 color: white;
                 border: none;
                 padding: 4px 8px;
                 border-radius: 4px;
                 font-size: 12px;
-                cursor: pointer;
-              "
-              disabled={!devServerUrl()}
+                cursor: ${runStatus() === 'idle' ? 'pointer' : 'default'};
+                opacity: ${runStatus() === 'idle' ? '1' : '0.8'};
+              `}
+              disabled={runStatus() !== 'idle'}
             >
-              ▶ Run
+              {runStatus() === 'idle' && '▶ Run'}
+              {runStatus() === 'booting' && '🔄 Booting...'}
+              {runStatus() === 'installing' && '📦 Installing...'}
+              {runStatus() === 'running' && '🚀 Starting...'}
+              {runStatus() === 'ready' && '✅ Ready'}
+              {runStatus() === 'error' && '❌ Error'}
             </button>
           )}
         </div>
@@ -398,7 +556,11 @@ console.log('Hello World!');`;
         color: white;
       ">
         {!isLoaded() ? 'Setting up environment...' :
-         devServerUrl() ? `Ready • Server: ${devServerUrl()}` :
+         runStatus() === 'ready' && devServerUrl() ? `Ready • Server: ${devServerUrl()}` :
+         runStatus() === 'booting' ? 'Booting WebContainer...' :
+         runStatus() === 'installing' ? 'Installing dependencies...' :
+         runStatus() === 'running' ? 'Starting dev server...' :
+         runStatus() === 'error' ? 'Error occurred' :
          'Ready'}
       </div>
     </div>

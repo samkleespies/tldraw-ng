@@ -8,6 +8,10 @@ export default defineConfig({
     host: true,
     fs: {
       allow: ['..', '../..']
+    },
+    headers: {
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Cross-Origin-Opener-Policy': 'same-origin',
     }
   },
   build: {

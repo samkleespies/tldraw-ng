@@ -16,9 +16,9 @@ export interface PreviewWidgetProps {
  * Preview Widget - Live iframe preview for files and servers
  */
 export const PreviewWidget: Component<PreviewWidgetProps> = (props) => {
-  const [isLoading, setIsLoading] = createSignal(true);
+  const [isLoading, setIsLoading] = createSignal(false); // Start with false, will be set to true when needed
   const [error, setError] = createSignal<string | null>(null);
-  const [mode, setMode] = createSignal<'file' | 'server'>('file');
+  const [mode, setMode] = createSignal<'file' | 'server'>('server'); // Default to server mode
   const [activeCode, setActiveCode] = createSignal('');
   const [activePath, setActivePath] = createSignal<string | null>(null);
   const [devServerUrl, setDevServerUrl] = createSignal<string | null>(null);
@@ -28,6 +28,8 @@ export const PreviewWidget: Component<PreviewWidgetProps> = (props) => {
   let iframeRef: HTMLIFrameElement | undefined;
 
   onMount(() => {
+    console.log('Preview widget mounted, mode:', mode(), 'props:', props);
+
     // Listen for file updates
     const handleFileUpdate = (event: CustomEvent) => {
       const { filePath, content } = event.detail;
@@ -41,6 +43,7 @@ export const PreviewWidget: Component<PreviewWidgetProps> = (props) => {
     // Listen for dev server ready
     const handleDevServerReady = (event: CustomEvent) => {
       const { url } = event.detail;
+      console.log('Preview widget received dev-server-ready event:', url);
       setDevServerUrl(url);
     };
 
@@ -490,15 +493,15 @@ root.render(React.createElement(App));`;
    * Render loading state
    */
   const renderLoading = () => (
-    <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.9); z-index: 10;">
-      <div style="text-align: center;">
+    <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; background: rgba(30, 30, 30, 0.95); z-index: 10;">
+      <div style="text-align: center; color: #cccccc;">
         <div style="margin-bottom: 12px;">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#cccccc" stroke-width="2">
             <path d="M8 2C4.5 2 1.5 5 1 8c.5 3 3.5 6 7 6s6.5-3 7-6c-.5-3-3.5-6-7-6z"/>
             <circle cx="8" cy="8" r="2"/>
           </svg>
         </div>
-        <div>Loading Preview...</div>
+        <div style="font-size: 14px;">Loading Preview...</div>
       </div>
     </div>
   );
@@ -507,7 +510,7 @@ root.render(React.createElement(App));`;
    * Render error state
    */
   const renderError = () => (
-    <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; background: #f8f8f8; z-index: 10;">
+    <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; background: rgba(30, 30, 30, 0.95); z-index: 10;">
       <div style="text-align: center; padding: 20px;">
         <div style="margin-bottom: 12px;">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
@@ -517,7 +520,7 @@ root.render(React.createElement(App));`;
           </svg>
         </div>
         <div style="font-weight: 600; margin-bottom: 8px; color: #ef4444;">Preview Error</div>
-        <div style="font-size: 14px; color: #6b7280; margin-bottom: 16px;">{error()}</div>
+        <div style="font-size: 14px; color: #cccccc; margin-bottom: 16px;">{error()}</div>
         <button 
           onClick={refresh}
           style="background: #3b82f6; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;"
@@ -529,7 +532,15 @@ root.render(React.createElement(App));`;
   );
 
   return (
-    <div style={`width: 100%; height: 100%; position: relative; ${!props.active ? 'pointer-events: none; opacity: 0.7;' : ''}`}>
+    <div
+      style={`width: 100%; height: 100%; position: relative; ${!props.active ? 'pointer-events: none; opacity: 0.7;' : ''}`}
+      onWheel={(e) => {
+        // Allow Ctrl+wheel to bubble for canvas zoom, but prevent regular wheel from affecting canvas
+        if (!e.ctrlKey && !e.metaKey) {
+          e.stopPropagation();
+        }
+      }}
+    >
       {/* Mode toggle button */}
       <div style="position: absolute; top: 8px; right: 8px; z-index: 20;">
         <button
@@ -578,44 +589,48 @@ root.render(React.createElement(App));`;
         <span style="color: #d1d5db; font-size: 13px; font-family: monospace; margin-left: auto;">
           {mode() === 'file'
             ? (activePath() ? `Preview - ${activePath()?.split('/').pop()}` : 'Preview')
-            : (devServerUrl() || 'Server Preview')
+            : (devServerUrl() ? 'Live Preview • tldraw-ng' : 'Server Preview')
           }
         </span>
       </div>
 
       {/* Content area */}
-      <div style="height: calc(100% - 40px); background: white; border-radius: 0 0 8px 8px; overflow: hidden; position: relative;">
-        {isLoading() && renderLoading()}
-        {error() && renderError()}
-
-        {mode() === 'file' ? (
-          <iframe
-            ref={iframeRef}
-            style="width: 100%; height: 100%; border: none;"
-            onLoad={handleLoad}
-            onError={handleError}
-            sandbox="allow-scripts allow-same-origin"
-            title="File Preview"
-          />
-        ) : (
-          devServerUrl() ? (
+      <div style="height: calc(100% - 40px); background: #1e1e1e; border-radius: 0 0 8px 8px; overflow: hidden; position: relative;">
+        {/* Only show content when not loading and no error */}
+        {!isLoading() && !error() && (
+          mode() === 'file' ? (
             <iframe
-              src={devServerUrl()}
+              ref={iframeRef}
               style="width: 100%; height: 100%; border: none;"
               onLoad={handleLoad}
               onError={handleError}
-              title="Server Preview"
+              sandbox="allow-scripts allow-same-origin"
+              title="File Preview"
             />
           ) : (
-            <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #6b7280;">
-              <div style="text-align: center;">
-                <div style="font-size: 24px; margin-bottom: 8px;">🌐</div>
-                <div>No dev server running</div>
-                <div style="font-size: 12px; margin-top: 4px;">Run your project to see the live preview</div>
+            devServerUrl() ? (
+              <iframe
+                src={devServerUrl()}
+                style="width: 100%; height: 100%; border: none;"
+                onLoad={handleLoad}
+                onError={handleError}
+                title="Server Preview"
+              />
+            ) : (
+              <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #cccccc;">
+                <div style="text-align: center;">
+                  <div style="font-size: 24px; margin-bottom: 8px;">🌐</div>
+                  <div style="font-size: 14px; font-weight: 500;">No dev server running</div>
+                  <div style="font-size: 12px; margin-top: 4px; color: #888888;">Run your project to see the live preview</div>
+                </div>
               </div>
-            </div>
+            )
           )
         )}
+
+        {/* Show overlays on top */}
+        {isLoading() && renderLoading()}
+        {error() && renderError()}
       </div>
     </div>
   );

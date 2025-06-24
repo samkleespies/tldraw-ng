@@ -597,7 +597,44 @@ const App: Component = () => {
   const handleKeyDown = (e: KeyboardEvent) => {
     if (!isInitialized()) return;
 
-    // Handle Ctrl/Cmd combinations first
+    // Check if the focus is inside a Monaco editor or other input element
+    const activeElement = document.activeElement;
+    const isInEditor = activeElement && (
+      activeElement.classList.contains('monaco-editor') ||
+      activeElement.closest('.monaco-editor') ||
+      activeElement.tagName === 'INPUT' ||
+      activeElement.tagName === 'TEXTAREA' ||
+      activeElement.contentEditable === 'true'
+    );
+
+    // If we're in an editor, only handle global shortcuts (Ctrl+Z, Ctrl+Y)
+    if (isInEditor) {
+      if (e.ctrlKey || e.metaKey) {
+        switch (e.key.toLowerCase()) {
+          case 'z':
+            if (e.shiftKey) {
+              // Ctrl+Shift+Z = Redo
+              sendToCore({ type: 'command', name: 'redo' });
+              e.preventDefault();
+              return;
+            } else {
+              // Ctrl+Z = Undo
+              sendToCore({ type: 'command', name: 'undo' });
+              e.preventDefault();
+              return;
+            }
+          case 'y':
+            // Ctrl+Y = Redo (alternative)
+            sendToCore({ type: 'command', name: 'redo' });
+            e.preventDefault();
+            return;
+        }
+      }
+      // For all other keys in editor, let them pass through
+      return;
+    }
+
+    // Handle Ctrl/Cmd combinations for global shortcuts
     if (e.ctrlKey || e.metaKey) {
       switch (e.key.toLowerCase()) {
         case 'z':
