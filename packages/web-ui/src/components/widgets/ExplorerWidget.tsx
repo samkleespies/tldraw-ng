@@ -29,7 +29,7 @@ export const ExplorerWidget: Component<ExplorerWidgetProps> = (props) => {
   const [selectedFile, setSelectedFile] = createSignal<string | null>(null);
   const [contextMenu, setContextMenu] = createSignal<{ x: number; y: number; node: FileNode } | null>(null);
   const [isLoading, setIsLoading] = createSignal(true);
-  const { openFileInEditor, fileSystem } = useWidgetLinking();
+  const { openFileInEditor, fileSystem, handleTitleBarDrag } = useWidgetLinking();
 
   onMount(() => {
     loadFileTree();
@@ -295,8 +295,25 @@ export const ExplorerWidget: Component<ExplorerWidgetProps> = (props) => {
       style={`width: 100%; height: 100%; background: #fafafa; border-radius: 8px; overflow: hidden; ${!props.active ? 'pointer-events: none; opacity: 0.7;' : ''}`}
       onClick={closeContextMenu}
     >
-      {/* Header */}
-      <div style="background: #f1f5f9; border-bottom: 1px solid #e2e8f0; padding: 12px 16px; display: flex; align-items: center; gap: 8px;">
+      {/* Draggable Title Bar */}
+      <div
+        style="
+          background: #f1f5f9;
+          border-bottom: 1px solid #e2e8f0;
+          padding: 12px 16px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          cursor: move;
+          user-select: none;
+        "
+        onMouseDown={(e) => {
+          // Use the drag handler from context
+          if (handleTitleBarDrag) {
+            handleTitleBarDrag(e, props.id);
+          }
+        }}
+      >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
         </svg>

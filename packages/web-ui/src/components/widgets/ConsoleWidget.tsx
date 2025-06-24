@@ -1,4 +1,5 @@
 import { Component, createSignal, onMount, onCleanup, For } from 'solid-js';
+import { useWidgetLinking } from '../../context/WidgetLinkingContext';
 
 export interface LogEntry {
   id: string;
@@ -28,6 +29,8 @@ export const ConsoleWidget: Component<ConsoleWidgetProps> = (props) => {
   const [searchTerm, setSearchTerm] = createSignal('');
   const [autoScroll, setAutoScroll] = createSignal(true);
   const [isPaused, setIsPaused] = createSignal(false);
+
+  const { handleTitleBarDrag } = useWidgetLinking();
   
   let consoleRef: HTMLDivElement | undefined;
   let originalConsole: any = {};
@@ -194,8 +197,26 @@ export const ConsoleWidget: Component<ConsoleWidgetProps> = (props) => {
 
   return (
     <div style={`width: 100%; height: 100%; display: flex; flex-direction: column; background: #1e1e1e; color: #cccccc; ${!props.active ? 'pointer-events: none; opacity: 0.7;' : ''}`}>
-      {/* Header */}
-      <div style="background: #2d2d30; border-bottom: 1px solid #3e3e42; padding: 8px 12px; display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+      {/* Draggable Title Bar */}
+      <div
+        style="
+          background: #2d2d30;
+          border-bottom: 1px solid #3e3e42;
+          padding: 8px 12px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-shrink: 0;
+          cursor: move;
+          user-select: none;
+        "
+        onMouseDown={(e) => {
+          // Use the drag handler from context
+          if (handleTitleBarDrag) {
+            handleTitleBarDrag(e, props.id);
+          }
+        }}
+      >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="2" y="3" width="20" height="14" rx="2"/>
           <line x1="8" y1="21" x2="16" y2="21"/>
@@ -208,6 +229,7 @@ export const ConsoleWidget: Component<ConsoleWidgetProps> = (props) => {
           <select
             value={filterLevel()}
             onChange={(e) => setFilterLevel(e.currentTarget.value)}
+            onMouseDown={(e) => e.stopPropagation()} // Prevent drag when using controls
             style="background: #3c3c3c; border: 1px solid #555; color: #cccccc; padding: 4px 8px; border-radius: 4px; font-size: 12px;"
           >
             <option value="all">All</option>
@@ -223,19 +245,22 @@ export const ConsoleWidget: Component<ConsoleWidgetProps> = (props) => {
             placeholder="Search..."
             value={searchTerm()}
             onInput={(e) => setSearchTerm(e.currentTarget.value)}
+            onMouseDown={(e) => e.stopPropagation()} // Prevent drag when using controls
             style="background: #3c3c3c; border: 1px solid #555; color: #cccccc; padding: 4px 8px; border-radius: 4px; font-size: 12px; width: 120px;"
           />
-          
+
           <button
             onClick={() => setIsPaused(!isPaused())}
+            onMouseDown={(e) => e.stopPropagation()} // Prevent drag when clicking button
             style={`background: ${isPaused() ? '#dc2626' : '#16a34a'}; color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer;`}
             title={isPaused() ? 'Resume' : 'Pause'}
           >
             {isPaused() ? '▶️' : '⏸️'}
           </button>
-          
+
           <button
             onClick={clearLogs}
+            onMouseDown={(e) => e.stopPropagation()} // Prevent drag when clicking button
             style="background: #6b7280; color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer;"
             title="Clear"
           >

@@ -23,7 +23,7 @@ export const PreviewWidget: Component<PreviewWidgetProps> = (props) => {
   const [activePath, setActivePath] = createSignal<string | null>(null);
   const [devServerUrl, setDevServerUrl] = createSignal<string | null>(null);
 
-  const { currentFile, getFileContent } = useWidgetLinking();
+  const { currentFile, getFileContent, handleTitleBarDrag } = useWidgetLinking();
 
   let iframeRef: HTMLIFrameElement | undefined;
 
@@ -534,6 +534,7 @@ root.render(React.createElement(App));`;
       <div style="position: absolute; top: 8px; right: 8px; z-index: 20;">
         <button
           onClick={toggleMode}
+          onMouseDown={(e) => e.stopPropagation()} // Prevent drag when clicking button
           style={`
             padding: 4px 8px;
             font-size: 12px;
@@ -550,8 +551,25 @@ root.render(React.createElement(App));`;
         </button>
       </div>
 
-      {/* Browser chrome */}
-      <div style="background: #374151; padding: 8px 12px; display: flex; align-items: center; gap: 8px; border-radius: 8px 8px 0 0;">
+      {/* Draggable Browser Chrome Title Bar */}
+      <div
+        style="
+          background: #374151;
+          padding: 8px 12px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          border-radius: 8px 8px 0 0;
+          cursor: move;
+          user-select: none;
+        "
+        onMouseDown={(e) => {
+          // Use the drag handler from context
+          if (handleTitleBarDrag) {
+            handleTitleBarDrag(e, props.id);
+          }
+        }}
+      >
         <div style="display: flex; gap: 4px;">
           <div style="width: 12px; height: 12px; background: #ef4444; border-radius: 50%;"></div>
           <div style="width: 12px; height: 12px; background: #f59e0b; border-radius: 50%;"></div>

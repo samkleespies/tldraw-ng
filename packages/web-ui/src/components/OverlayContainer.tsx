@@ -1,4 +1,4 @@
-import { Component, createSignal, createEffect, onMount, onCleanup, For, createMemo, createRoot, useContext } from 'solid-js';
+import { Component, createSignal, createEffect, onMount, onCleanup, For, createMemo, Index } from 'solid-js';
 import { WidgetLinkingProvider, WidgetLinkingContext } from '../context/WidgetLinkingContext';
 import { createStore, produce } from 'solid-js/store';
 import { getCoordinateTransformer, type Bounds } from '../utils/coordinates';
@@ -15,7 +15,13 @@ export interface WidgetOverlay {
   active: boolean;
   bounds: Bounds;
   zIndex: number;
-  component?: Component;
+}
+
+// Separate interface for widget instances with stable references
+interface WidgetInstance {
+  id: number;
+  type: 'monaco' | 'terminal' | 'preview' | 'chat' | 'explorer' | 'console';
+  component: Component;
 }
 
 interface OverlayContainerProps {
@@ -27,7 +33,9 @@ interface OverlayContainerProps {
  * It handles coordinate transformation, positioning, and lifecycle management
  */
 export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
-  const [overlays, setOverlays] = createSignal<WidgetOverlay[]>([]);
+  // Use stores for efficient updates without recreation
+  const [overlayStore, setOverlayStore] = createStore<Record<number, WidgetOverlay>>({});
+  const [widgetInstances, setWidgetInstances] = createStore<Record<number, WidgetInstance>>({});
   const [isInitialized, setIsInitialized] = createSignal(false);
   const [frameRate, setFrameRate] = createSignal(0);
   const [overlayCount, setOverlayCount] = createSignal(0);
@@ -92,51 +100,74 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
       const activeWidgetsJson = core.get_active_widgets();
       const activeWidgets = JSON.parse(activeWidgetsJson);
 
-      // Update overlays based on active widgets
-      const newOverlays: WidgetOverlay[] = [];
-      const currentOverlays = overlays();
+      // Track current widget IDs
+      const currentIds = new Set(Object.keys(overlayStore).map(Number));
+      const newIds = new Set(activeWidgets.map((w: any) => w.id));
 
+      // Remove widgets that no longer exist
+      for (const id of currentIds) {
+        if (!newIds.has(id)) {
+          setOverlayStore(produce(store => {
+            delete store[id];
+          }));
+          setWidgetInstances(produce(instances => {
+            delete instances[id];
+          }));
+        }
+      }
+
+      // Update or create widgets
       for (const widget of activeWidgets) {
         const domBounds = transformer.getWidgetTransform(widget.id).domBounds;
 
         if (domBounds) {
-          newOverlays.push({
+          const newOverlay: WidgetOverlay = {
             id: widget.id,
             type: widget.type,
             active: widget.active,
             bounds: domBounds,
-            zIndex: 1000 + widget.id, // Ensure overlays are above canvas
-            component: undefined // Will be set when we implement actual widgets
-          });
+            zIndex: 1000 + widget.id,
+          };
+
+          const currentOverlay = overlayStore[widget.id];
+
+          // Create new widget instance if it doesn't exist
+          if (!currentOverlay) {
+            setOverlayStore(widget.id, newOverlay);
+            createWidgetInstance(widget.id, widget.type);
+          } else {
+            // Update existing overlay (positions, active state) without recreation
+            setOverlayStore(widget.id, newOverlay);
+          }
         }
       }
 
-      // Check if widget count or types changed (not just positions)
-      const currentIds = new Set(currentOverlays.map(o => o.id));
-      const newIds = new Set(newOverlays.map(o => o.id));
-      const idsChanged = currentIds.size !== newIds.size ||
-                        [...currentIds].some(id => !newIds.has(id)) ||
-                        [...newIds].some(id => !currentIds.has(id));
-
-      // Check if active states changed
-      const activeStatesChanged = newOverlays.some(newOverlay => {
-        const currentOverlay = currentOverlays.find(o => o.id === newOverlay.id);
-        return !currentOverlay || currentOverlay.active !== newOverlay.active;
-      });
-
-      // Only update if widget count, types, or active states changed (not just positions)
-      if (idsChanged || activeStatesChanged) {
-        setOverlays(newOverlays);
-        setOverlayCount(newOverlays.length);
-
-        // Widget set changed - no logging needed for performance
-      } else {
-        // Just update positions without recreating overlays
-        setOverlays(newOverlays);
-      }
+      setOverlayCount(Object.keys(overlayStore).length);
     } catch (error) {
       // Silently handle JSON parsing errors (expected during initialization)
     }
+  };
+
+  /**
+   * Create a stable widget instance that persists across position updates
+   */
+  const createWidgetInstance = (id: number, type: string) => {
+    const widgetComponent = () => {
+      const overlay = () => overlayStore[id];
+      if (!overlay()) return null;
+
+      return (
+        <WidgetLinkingProvider handleTitleBarDrag={handleWidgetTitleBarDrag}>
+          {renderWidgetContent(overlay())}
+        </WidgetLinkingProvider>
+      );
+    };
+
+    setWidgetInstances(id, {
+      id,
+      type: type as any,
+      component: widgetComponent
+    });
   };
 
   /**
@@ -158,6 +189,53 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
         core.render_frame();
       }
     }
+  };
+
+  /**
+   * Handle widget title bar drag start
+   */
+  const handleWidgetTitleBarDrag = (e: MouseEvent, widgetId: number) => {
+    // Only handle left mouse button
+    if (e.button !== 0) return;
+
+    e.stopPropagation();
+    e.preventDefault();
+
+    const core = (window as any).whiteboardCore;
+    if (!core) return;
+
+    // Get mouse position relative to canvas
+    const canvasBounds = props.canvasRef?.getBoundingClientRect();
+    if (!canvasBounds) return;
+
+    const x = e.clientX - canvasBounds.left;
+    const y = e.clientY - canvasBounds.top;
+
+    // Start widget drag in core
+    core.start_widget_drag(widgetId, x, y);
+
+    // Set up mouse move and up handlers for the drag operation
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const moveX = moveEvent.clientX - canvasBounds.left;
+      const moveY = moveEvent.clientY - canvasBounds.top;
+      core.handle_pointer_move(moveX, moveY);
+      core.render_frame();
+    };
+
+    const handleMouseUp = (upEvent: MouseEvent) => {
+      const upX = upEvent.clientX - canvasBounds.left;
+      const upY = upEvent.clientY - canvasBounds.top;
+      core.handle_pointer_up(upX, upY);
+      core.render_frame();
+
+      // Clean up event listeners
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    // Add global event listeners for drag operation
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
   };
 
   /**
@@ -192,12 +270,7 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
       height: ${overlay.bounds.height}px;
       z-index: ${overlay.zIndex};
       pointer-events: ${overlay.active ? 'auto' : 'none'};
-      border: 2px solid ${overlay.active ? '#0ea5e9' : '#6b7280'};
       border-radius: 8px;
-      background: rgba(0, 0, 0, 0.8);
-      backdrop-filter: blur(8px);
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-      transition: all 0.2s ease;
       overflow: hidden;
       cursor: ${overlay.active ? 'default' : 'pointer'};
     `;
@@ -418,31 +491,36 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
     }
   };
 
+  // Create a memo for overlay IDs to prevent unnecessary re-renders
+  const overlayIds = createMemo(() => Object.keys(overlayStore).map(Number));
+
   return (
-    <div 
+    <div
       ref={containerRef}
       style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1000;"
     >
-      <For each={overlays()} fallback={<div>No widgets</div>}>
-        {(overlay) => (
-          <div
-            key={overlay.id}
-            style={getOverlayStyle(overlay)}
-            data-widget-id={overlay.id}
-            data-widget-type={overlay.type}
-            onClick={(e) => handleWidgetClick(e, overlay)}
-            onMouseDown={handleWidgetMouseDown}
-            onMouseMove={handleWidgetMouseMove}
-            onMouseUp={handleWidgetMouseUp}
-          >
-            {createRoot(() => (
-              <WidgetLinkingProvider>
-                {renderWidgetContent(overlay)}
-              </WidgetLinkingProvider>
-            ))}
-          </div>
-        )}
-      </For>
+      <Index each={overlayIds()} fallback={<div>No widgets</div>}>
+        {(overlayId) => {
+          const id = overlayId();
+          const overlay = () => overlayStore[id];
+          const widgetInstance = () => widgetInstances[id];
+
+          return (
+            <div
+              style={getOverlayStyle(overlay())}
+              data-widget-id={id}
+              data-widget-type={overlay()?.type}
+              onClick={(e) => handleWidgetClick(e, overlay())}
+              onMouseDown={handleWidgetMouseDown}
+              onMouseMove={handleWidgetMouseMove}
+              onMouseUp={handleWidgetMouseUp}
+            >
+              {/* Use stable widget instance instead of recreating */}
+              {widgetInstance()?.component?.()}
+            </div>
+          );
+        }}
+      </Index>
     </div>
   );
 };

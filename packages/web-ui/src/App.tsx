@@ -163,6 +163,43 @@ const App: Component = () => {
     }
   };
 
+  /**
+   * Set up global mouse capture for resize operations to prevent interruption
+   */
+  const setupResizeMouseCapture = (startX: number, startY: number) => {
+    const core = (window as any).whiteboardCore;
+    if (!core || !canvasRef) return;
+
+    const canvasBounds = canvasRef.getBoundingClientRect();
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const moveX = moveEvent.clientX - canvasBounds.left;
+      const moveY = moveEvent.clientY - canvasBounds.top;
+
+      // Update resize cursor and handle resize
+      setResizeCursor(core.get_resize_cursor(moveX, moveY));
+      core.handle_pointer_move(moveX, moveY);
+      core.render_frame();
+    };
+
+    const handleMouseUp = (upEvent: MouseEvent) => {
+      const upX = upEvent.clientX - canvasBounds.left;
+      const upY = upEvent.clientY - canvasBounds.top;
+
+      core.handle_pointer_up(upX, upY);
+      setIsDragging(core.is_dragging());
+      core.render_frame();
+
+      // Clean up global event listeners
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    // Add global event listeners for resize operation
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+
   const sendToCore = (msg: MsgFromUI) => {
     const core = (window as any).whiteboardCore;
     if (!core) return;
@@ -173,6 +210,12 @@ const App: Component = () => {
           core.handle_pointer_down(msg.x, msg.y, msg.ctrlKey || false);
           setSelectedCount(core.selected_count());
           setIsDragging(core.is_dragging());
+
+          // Check if we started a resize operation and set up global mouse capture
+          if (core.is_resizing && core.is_resizing()) {
+            setupResizeMouseCapture(msg.x, msg.y);
+          }
+
           core.render_frame();
         }
         // For shape tools, we don't do anything on mouse down - wait for move or up
@@ -237,8 +280,11 @@ const App: Component = () => {
           }
           isWaitingForShapeCreation = false;
         } else if (isCreatingShape()) {
-          // Finish drag creation
-          sendToCore({ type: 'finishShapeCreation' });
+          // Finish drag creation (works for both shapes and widgets)
+          const shapeId = sendToCore({ type: 'finishShapeCreation' });
+          if (shapeId) {
+            setShapeCount((window as any).whiteboardCore?.shape_count() || 0);
+          }
         }
         break;
 

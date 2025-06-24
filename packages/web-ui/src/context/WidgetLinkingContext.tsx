@@ -11,13 +11,16 @@ interface WidgetLinkingContextType {
   openFileInEditor: (filePath: string) => void;
   getFileContent: (filePath: string) => string;
   setFileContent: (filePath: string, content: string) => void;
-  
+
   // Widget communication
   currentFile: () => string;
   setCurrentFile: (filePath: string) => void;
-  
+
   // File system
   fileSystem: () => Record<string, string>;
+
+  // Widget dragging
+  handleTitleBarDrag?: (e: MouseEvent, widgetId: number) => void;
 }
 
 const WidgetLinkingContext = createContext<WidgetLinkingContextType>();
@@ -232,7 +235,10 @@ Edit files in the Monaco editor and see changes instantly in the preview!
 `
 };
 
-export function WidgetLinkingProvider(props: { children: any }) {
+export function WidgetLinkingProvider(props: {
+  children: any;
+  handleTitleBarDrag?: (e: MouseEvent, widgetId: number) => void;
+}) {
   const [fileSystem, setFileSystem] = createSignal<Record<string, string>>(defaultFileSystem);
   const [currentFile, setCurrentFile] = createSignal<string>('/src/App.tsx');
 
@@ -268,7 +274,8 @@ export function WidgetLinkingProvider(props: { children: any }) {
     setFileContent,
     currentFile,
     setCurrentFile,
-    fileSystem
+    fileSystem,
+    handleTitleBarDrag: props.handleTitleBarDrag
   };
 
   return (

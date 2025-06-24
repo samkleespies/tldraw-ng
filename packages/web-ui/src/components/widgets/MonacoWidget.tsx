@@ -4,9 +4,13 @@ import { useWidgetLinking } from '../../context/WidgetLinkingContext';
 // Configure Monaco environment to avoid worker issues
 if (typeof window !== 'undefined') {
   (window as any).MonacoEnvironment = {
-    getWorker: function () {
-      // Return null to disable workers and run in main thread
+    getWorker: function (workerId: string, label: string) {
+      // Disable all workers to avoid CORS and loading issues
       return null;
+    },
+    getWorkerUrl: function (workerId: string, label: string) {
+      // Return empty string to prevent worker loading attempts
+      return '';
     }
   };
 }
@@ -36,10 +40,13 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
   const [currentFilePath, setCurrentFilePath] = createSignal(props.filePath);
   const [devServerUrl, setDevServerUrl] = createSignal('');
 
-  const { getFileContent, setFileContent, currentFile } = useWidgetLinking();
+  const { getFileContent, setFileContent, currentFile, handleTitleBarDrag } = useWidgetLinking();
 
   let containerRef: HTMLDivElement | undefined;
   let editor: any = null;
+
+  // Store event handler reference for cleanup
+  let fileOpenHandler: ((event: CustomEvent) => void) | null = null;
 
   onMount(async () => {
     const initializeEditor = async () => {
@@ -49,7 +56,7 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
         // Load Monaco dynamically
         const monaco = await loadMonaco();
 
-        // Initialize Monaco Editor with minimal configuration
+        // Initialize Monaco Editor with minimal configuration to avoid worker issues
         editor = monaco.editor.create(containerRef, {
           value: getInitialContent(),
           language: getLanguageFromFilePath(currentFilePath()),
@@ -59,7 +66,7 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
           scrollBeyondLastLine: false,
           fontSize: 14,
           wordWrap: 'on',
-          // Disable features that require workers
+          // Disable all features that might require workers or cause errors
           quickSuggestions: false,
           suggestOnTriggerCharacters: false,
           parameterHints: { enabled: false },
@@ -70,44 +77,72 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
           links: false,
           colorDecorators: false,
           contextmenu: false,
-          mouseWheelZoom: false
+          mouseWheelZoom: false,
+          // Additional worker-related features to disable
+          wordBasedSuggestions: false,
+          semanticHighlighting: { enabled: false },
+          occurrencesHighlight: false,
+          renderValidationDecorations: 'off',
+          // Disable language services that might cause worker issues
+          'bracketPairColorization.enabled': false,
+          'editor.inlineSuggest.enabled': false,
+          'editor.suggest.showWords': false,
+          'editor.suggest.showSnippets': false
         });
 
-        // Auto-apply changes when editor content changes
-        editor.onDidChangeModelContent(() => {
-          const content = editor.getValue();
-          const filePath = currentFilePath();
-          if (filePath) {
-            setFileContent(filePath, content);
-          }
-          props.onContentChange?.(content);
-        });
+        // Auto-apply changes when editor content changes with error handling
+        try {
+          editor.onDidChangeModelContent(() => {
+            try {
+              const content = editor?.getValue?.() || '';
+              const filePath = currentFilePath();
+              if (filePath) {
+                setFileContent(filePath, content);
+              }
+              props.onContentChange?.(content);
+            } catch (err) {
+              // Silently handle content change errors
+            }
+          });
+        } catch (err) {
+          // Silently handle event listener setup errors
+        }
 
         setIsLoaded(true);
 
-        // Listen for file opening events
-        const handleFileOpen = (event: CustomEvent) => {
-          const { filePath, content: fileContent } = event.detail;
-          setCurrentFilePath(filePath);
-          if (editor) {
-            editor.setValue(fileContent);
-            const model = editor.getModel();
-            if (model) {
-              const language = getLanguageFromFilePath(filePath);
-              monaco.editor.setModelLanguage(model, language);
+        // Listen for file opening events with error handling
+        fileOpenHandler = (event: CustomEvent) => {
+          try {
+            const { filePath, content: fileContent } = event.detail;
+            if (!filePath || !editor) return;
+
+            setCurrentFilePath(filePath);
+
+            // Safely set editor value
+            if (typeof editor.setValue === 'function') {
+              editor.setValue(fileContent || '');
             }
+
+            // Safely update language
+            const model = editor.getModel?.();
+            if (model && typeof monaco.editor.setModelLanguage === 'function') {
+              const language = getLanguageFromFilePath(filePath);
+              try {
+                monaco.editor.setModelLanguage(model, language);
+              } catch (langErr) {
+                // Silently handle language setting errors
+              }
+            }
+          } catch (err) {
+            // Silently handle file open errors
           }
         };
 
-        window.addEventListener('open-file-in-editor', handleFileOpen as EventListener);
-
-        onCleanup(() => {
-          window.removeEventListener('open-file-in-editor', handleFileOpen as EventListener);
-        });
+        window.addEventListener('open-file-in-editor', fileOpenHandler as EventListener);
 
       } catch (error) {
         console.warn('Monaco Editor failed to load, using fallback:', error);
-        setError('Monaco Editor failed to load');
+        setError(`Monaco Editor failed to load: ${error instanceof Error ? error.message : 'Unknown error'}`);
         setIsLoaded(true); // Still show the widget with error state
       }
     };
@@ -116,8 +151,24 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
   });
 
   onCleanup(() => {
-    if (editor) {
-      editor.dispose();
+    // Remove event listener safely
+    try {
+      if (fileOpenHandler) {
+        window.removeEventListener('open-file-in-editor', fileOpenHandler as EventListener);
+        fileOpenHandler = null;
+      }
+    } catch (err) {
+      // Silently handle event listener removal errors
+    }
+
+    // Dispose Monaco editor safely
+    try {
+      if (editor && typeof editor.dispose === 'function') {
+        editor.dispose();
+      }
+    } catch (err) {
+      // Silently handle disposal errors
+    } finally {
       editor = null;
     }
   });
@@ -254,24 +305,35 @@ console.log('Hello World!');`;
         ${!props.active ? 'pointer-events: none; opacity: 0.7;' : ''}
       `}
     >
-      {/* Header */}
-      <div style="
-        height: 40px;
-        background-color: #2d2d30;
-        border-bottom: 1px solid #3e3e42;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 0 12px;
-        color: #cccccc;
-        font-size: 14px;
-      ">
+      {/* Draggable Title Bar */}
+      <div
+        style="
+          height: 40px;
+          background-color: #2d2d30;
+          border-bottom: 1px solid #3e3e42;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 0 12px;
+          color: #cccccc;
+          font-size: 14px;
+          cursor: move;
+          user-select: none;
+        "
+        onMouseDown={(e) => {
+          // Use the drag handler from context
+          if (handleTitleBarDrag) {
+            handleTitleBarDrag(e, props.id);
+          }
+        }}
+      >
         <span>{currentFilePath().split('/').pop() || 'App.tsx'}</span>
         <div style="display: flex; gap: 8px;">
           {!isLoaded() && <span style="font-size: 12px;">Loading...</span>}
           {isLoaded() && (
             <button
               onClick={handleRunProject}
+              onMouseDown={(e) => e.stopPropagation()} // Prevent drag when clicking button
               style="
                 background-color: #0e639c;
                 color: white;

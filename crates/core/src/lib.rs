@@ -718,6 +718,12 @@ impl WhiteboardCore {
         self.is_dragging
     }
 
+    /// Check if currently resizing
+    #[wasm_bindgen]
+    pub fn is_resizing(&self) -> bool {
+        self.is_resizing
+    }
+
     /// Get current camera scale for coordinate conversion
     #[wasm_bindgen]
     pub fn get_camera_scale(&self) -> f64 {
@@ -760,6 +766,86 @@ impl WhiteboardCore {
                 id,
                 position: Point { x: world_x, y: world_y },
                 shape_type: ShapeType::Ellipse { width: 1.0, height: 1.0 },
+                color: [1.0, 1.0, 1.0, 1.0], // White
+            },
+            "monaco" => Shape {
+                id,
+                position: Point { x: world_x, y: world_y },
+                shape_type: ShapeType::Widget {
+                    widget_type: WidgetType::Monaco {
+                        language: "typescript".to_string(),
+                        file_path: "untitled.ts".to_string(),
+                    },
+                    width: 100.0,
+                    height: 100.0,
+                    active: true,
+                },
+                color: [1.0, 1.0, 1.0, 1.0], // White
+            },
+            "terminal" => Shape {
+                id,
+                position: Point { x: world_x, y: world_y },
+                shape_type: ShapeType::Widget {
+                    widget_type: WidgetType::Terminal {
+                        session_id: format!("session_{}", id.0),
+                    },
+                    width: 100.0,
+                    height: 100.0,
+                    active: true,
+                },
+                color: [1.0, 1.0, 1.0, 1.0], // White
+            },
+            "preview" => Shape {
+                id,
+                position: Point { x: world_x, y: world_y },
+                shape_type: ShapeType::Widget {
+                    widget_type: WidgetType::Preview {
+                        url: "http://localhost:3000".to_string(),
+                        preview_type: PreviewType::Server,
+                    },
+                    width: 100.0,
+                    height: 100.0,
+                    active: true,
+                },
+                color: [1.0, 1.0, 1.0, 1.0], // White
+            },
+            "chat" => Shape {
+                id,
+                position: Point { x: world_x, y: world_y },
+                shape_type: ShapeType::Widget {
+                    widget_type: WidgetType::Chat {
+                        conversation_id: format!("conv_{}", id.0),
+                    },
+                    width: 100.0,
+                    height: 100.0,
+                    active: true,
+                },
+                color: [1.0, 1.0, 1.0, 1.0], // White
+            },
+            "explorer" => Shape {
+                id,
+                position: Point { x: world_x, y: world_y },
+                shape_type: ShapeType::Widget {
+                    widget_type: WidgetType::Explorer {
+                        root_path: "/workspace".to_string(),
+                    },
+                    width: 100.0,
+                    height: 100.0,
+                    active: true,
+                },
+                color: [1.0, 1.0, 1.0, 1.0], // White
+            },
+            "console" => Shape {
+                id,
+                position: Point { x: world_x, y: world_y },
+                shape_type: ShapeType::Widget {
+                    widget_type: WidgetType::Console {
+                        log_level: "all".to_string(),
+                    },
+                    width: 100.0,
+                    height: 100.0,
+                    active: true,
+                },
                 color: [1.0, 1.0, 1.0, 1.0], // White
             },
             _ => return, // Unknown shape type
@@ -1273,6 +1359,41 @@ impl WhiteboardCore {
         self.is_selection_dragging = false;
         self.selection_start = None;
         self.selection_current = None;
+    }
+
+    /// Start dragging a specific widget from its title bar
+    #[wasm_bindgen]
+    pub fn start_widget_drag(&mut self, widget_id: u32, x: f64, y: f64) {
+        // Convert screen coordinates to world coordinates
+        let world_x = (x / self.camera_scale as f64) + self.camera_translation[0] as f64;
+        let world_y = (y / self.camera_scale as f64) + self.camera_translation[1] as f64;
+
+        let shape_id = ShapeId(widget_id);
+
+        // Check if the widget exists
+        if !self.shapes.contains_key(&shape_id) {
+            return;
+        }
+
+        // Save state before starting drag
+        self.save_state();
+
+        // Select only this widget
+        self.selected_shapes.clear();
+        self.selected_shapes.push(shape_id);
+
+        // Start dragging
+        self.is_dragging = true;
+        self.drag_start = Some(Point { x: world_x, y: world_y });
+
+        // Calculate drag offset for this widget
+        self.drag_offset.clear();
+        if let Some(shape) = self.shapes.get(&shape_id) {
+            self.drag_offset.insert(shape_id, Point {
+                x: shape.position.x - world_x,
+                y: shape.position.y - world_y,
+            });
+        }
     }
 
     /// Handle wheel event for vertical scrolling (like tldraw)

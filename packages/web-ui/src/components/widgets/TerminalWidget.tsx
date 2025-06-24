@@ -2,6 +2,7 @@ import { Component, createSignal, onMount, onCleanup, createEffect } from 'solid
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
+import { useWidgetLinking } from '../../context/WidgetLinkingContext';
 import 'xterm/css/xterm.css';
 
 export interface TerminalWidgetProps {
@@ -20,6 +21,8 @@ export const TerminalWidget: Component<TerminalWidgetProps> = (props) => {
   const [isLoaded, setIsLoaded] = createSignal(false);
   const [isConnected, setIsConnected] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+
+  const { handleTitleBarDrag } = useWidgetLinking();
   
   let containerRef: HTMLDivElement | undefined;
   let terminal: Terminal | null = null;
@@ -292,12 +295,62 @@ export const TerminalWidget: Component<TerminalWidgetProps> = (props) => {
   );
 
   return (
-    <div style={`width: 100%; height: 100%; position: relative; ${!props.active ? 'pointer-events: none; opacity: 0.7;' : ''}`}>
-      {error() ? renderError() : !isLoaded() ? renderLoading() : null}
-      <div 
-        ref={containerRef}
-        style={`width: 100%; height: 100%; ${!isLoaded() ? 'display: none;' : ''}`}
-      />
+    <div
+      style={`
+        width: 100%;
+        height: 100%;
+        background: #1e1e1e;
+        border-radius: 8px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        border: 1px solid #333;
+        ${!props.active ? 'pointer-events: none; opacity: 0.7;' : ''}
+      `}
+    >
+      {/* Draggable Title Bar */}
+      <div
+        style="
+          height: 40px;
+          background-color: #2d2d30;
+          border-bottom: 1px solid #3e3e42;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 0 12px;
+          color: #cccccc;
+          font-size: 14px;
+          cursor: move;
+          user-select: none;
+        "
+        onMouseDown={(e) => {
+          // Use the drag handler from context
+          if (handleTitleBarDrag) {
+            handleTitleBarDrag(e, props.id);
+          }
+        }}
+      >
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M2 4l3 3-3 3M7 10h10"/>
+            <rect x="1" y="2" width="22" height="20" rx="2"/>
+          </svg>
+          <span>Terminal - {props.sessionId}</span>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          {!isLoaded() && <span style="font-size: 12px;">Loading...</span>}
+          {isConnected() && <span style="font-size: 12px; color: #a9dc76;">●</span>}
+        </div>
+      </div>
+
+      {/* Terminal Content */}
+      <div style="flex: 1; position: relative;">
+        {error() ? renderError() : !isLoaded() ? renderLoading() : null}
+        <div
+          ref={containerRef}
+          style={`width: 100%; height: 100%; ${!isLoaded() ? 'display: none;' : ''}`}
+        />
+      </div>
     </div>
   );
 };

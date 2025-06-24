@@ -1,4 +1,5 @@
 import { Component, createSignal, onMount, For } from 'solid-js';
+import { useWidgetLinking } from '../../context/WidgetLinkingContext';
 
 export interface ChatMessage {
   id: string;
@@ -25,6 +26,8 @@ export const ChatWidget: Component<ChatWidgetProps> = (props) => {
   const [inputValue, setInputValue] = createSignal('');
   const [isLoading, setIsLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+
+  const { handleTitleBarDrag } = useWidgetLinking();
   
   let inputRef: HTMLTextAreaElement | undefined;
   let messagesRef: HTMLDivElement | undefined;
@@ -237,8 +240,25 @@ What would you like to know about these shapes?${contextInfo}`;
 
   return (
     <div style={`width: 100%; height: 100%; display: flex; flex-direction: column; background: #f8fafc; ${!props.active ? 'pointer-events: none; opacity: 0.7;' : ''}`}>
-      {/* Header */}
-      <div style="background: #1e293b; color: white; padding: 12px 16px; display: flex; align-items: center; gap: 8px;">
+      {/* Draggable Title Bar */}
+      <div
+        style="
+          background: #1e293b;
+          color: white;
+          padding: 12px 16px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          cursor: move;
+          user-select: none;
+        "
+        onMouseDown={(e) => {
+          // Use the drag handler from context
+          if (handleTitleBarDrag) {
+            handleTitleBarDrag(e, props.id);
+          }
+        }}
+      >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
         </svg>
@@ -296,6 +316,7 @@ What would you like to know about these shapes?${contextInfo}`;
           value={inputValue()}
           onInput={(e) => setInputValue(e.currentTarget.value)}
           onKeyPress={handleKeyPress}
+          onMouseDown={(e) => e.stopPropagation()} // Prevent drag when using input
           placeholder="Ask me anything... (use @shape123 to reference shapes)"
           style="flex: 1; border: 1px solid #d1d5db; border-radius: 8px; padding: 12px; resize: none; font-family: inherit; min-height: 20px; max-height: 100px;"
           rows="1"
@@ -303,6 +324,7 @@ What would you like to know about these shapes?${contextInfo}`;
         />
         <button
           onClick={sendMessage}
+          onMouseDown={(e) => e.stopPropagation()} // Prevent drag when clicking button
           disabled={!inputValue().trim() || isLoading()}
           style="background: #3b82f6; color: white; border: none; border-radius: 8px; padding: 12px 16px; cursor: pointer; font-weight: 600; disabled:opacity-50; disabled:cursor-not-allowed;"
         >
