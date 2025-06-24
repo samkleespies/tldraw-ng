@@ -302,6 +302,18 @@ const App: Component = () => {
           core.render_frame();
         }
         break;
+      case 'undo':
+        core.undo();
+        setShapeCount(core.shape_count());
+        setSelectedCount(core.selected_count());
+        core.render_frame();
+        break;
+      case 'redo':
+        core.redo();
+        setShapeCount(core.shape_count());
+        setSelectedCount(core.selected_count());
+        core.render_frame();
+        break;
     }
   };
 
@@ -421,6 +433,27 @@ const App: Component = () => {
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (!isInitialized()) return;
+
+    // Handle Ctrl/Cmd combinations first
+    if (e.ctrlKey || e.metaKey) {
+      switch (e.key.toLowerCase()) {
+        case 'z':
+          if (e.shiftKey) {
+            // Ctrl+Shift+Z = Redo
+            sendToCore({ type: 'command', name: 'redo' });
+          } else {
+            // Ctrl+Z = Undo
+            sendToCore({ type: 'command', name: 'undo' });
+          }
+          e.preventDefault();
+          return;
+        case 'y':
+          // Ctrl+Y = Redo (alternative)
+          sendToCore({ type: 'command', name: 'redo' });
+          e.preventDefault();
+          return;
+      }
+    }
 
     // Prevent default for our handled keys
     const handled = ['v', 'r', 'o', 'Delete', 'Backspace', 'Escape'].includes(e.key.toLowerCase());
@@ -555,6 +588,30 @@ const App: Component = () => {
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M3 6h10l-1 8H4L3 6zM5 6V4a1 1 0 011-1h4a1 1 0 011 1v2M7 9v3M9 9v3"/>
+          </svg>
+        </button>
+
+        <div class="tool-separator" />
+
+        {/* Undo/Redo buttons on the far right */}
+        <button
+          class="tool-btn"
+          onClick={() => handleCommand('undo')}
+          disabled={!isInitialized()}
+          title="Undo (Ctrl+Z)"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M3 7v6h6M3 7l4-4M3 7l4 4"/>
+          </svg>
+        </button>
+        <button
+          class="tool-btn"
+          onClick={() => handleCommand('redo')}
+          disabled={!isInitialized()}
+          title="Redo (Ctrl+Y)"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M13 7v6H7M13 7l-4-4M13 7l-4 4"/>
           </svg>
         </button>
       </div>

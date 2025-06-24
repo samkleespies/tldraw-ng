@@ -88,6 +88,75 @@ pub struct ResizeHandleInfo {
     pub size: f64, // Handle size in pixels
 }
 
+/// Simplified state snapshot for undo/redo
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanvasState {
+    shapes: HashMap<ShapeId, Shape>,
+    selected_shapes: Vec<ShapeId>,
+    next_id: u32,
+}
+
+/// History manager for undo/redo using state snapshots
+#[derive(Debug, Clone)]
+pub struct History {
+    undo_stack: Vec<CanvasState>,
+    redo_stack: Vec<CanvasState>,
+    max_history: usize,
+}
+
+impl History {
+    pub fn new() -> Self {
+        Self {
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            max_history: 50, // Reduced since we're storing full states
+        }
+    }
+
+    pub fn push_state(&mut self, state: CanvasState) {
+        // Clear redo stack when new state is added
+        self.redo_stack.clear();
+
+        // Add to undo stack
+        self.undo_stack.push(state);
+
+        // Limit history size
+        if self.undo_stack.len() > self.max_history {
+            self.undo_stack.remove(0);
+        }
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
+
+    pub fn undo_with_current_state(&mut self, current_state: CanvasState) -> Option<CanvasState> {
+        if let Some(previous_state) = self.undo_stack.pop() {
+            // Save current state to redo stack
+            self.redo_stack.push(current_state);
+            // Return the previous state to restore
+            Some(previous_state)
+        } else {
+            None
+        }
+    }
+
+    pub fn redo_with_current_state(&mut self, current_state: CanvasState) -> Option<CanvasState> {
+        if let Some(next_state) = self.redo_stack.pop() {
+            // Save current state to undo stack
+            self.undo_stack.push(current_state);
+            // Return the next state to restore
+            Some(next_state)
+        } else {
+            None
+        }
+    }
+}
+
 /// Data structure for resize operations
 #[derive(Debug, Clone)]
 struct ResizeData {
@@ -158,6 +227,7 @@ pub struct WhiteboardCore {
     resize_handle: Option<ResizeHandle>,
     resize_shape_id: Option<ShapeId>,
     resize_start_bounds: Option<BoundingBox>,
+    resize_original_shape: Option<Shape>, // Store original shape for undo
     // Selection rectangle state
     is_selection_dragging: bool,
     selection_start: Option<Point>,
@@ -168,6 +238,8 @@ pub struct WhiteboardCore {
     creation_current: Option<Point>,
     creation_shape_type: Option<String>,
     creation_shape_id: Option<ShapeId>,
+    // History for undo/redo
+    history: History,
 }
 
 #[wasm_bindgen]
@@ -190,6 +262,7 @@ impl WhiteboardCore {
             resize_handle: None,
             resize_shape_id: None,
             resize_start_bounds: None,
+            resize_original_shape: None,
             // Selection rectangle state
             is_selection_dragging: false,
             selection_start: None,
@@ -200,6 +273,8 @@ impl WhiteboardCore {
             creation_current: None,
             creation_shape_type: None,
             creation_shape_id: None,
+            // History for undo/redo
+            history: History::new(),
         }
     }
 
@@ -232,6 +307,9 @@ impl WhiteboardCore {
     /// Create a new rectangle shape
     #[wasm_bindgen]
     pub fn create_rectangle(&mut self, x: f64, y: f64, width: f64, height: f64) -> u32 {
+        // Save state before operation
+        self.save_state();
+
         let id = ShapeId(self.next_id);
         self.next_id += 1;
 
@@ -249,6 +327,9 @@ impl WhiteboardCore {
     /// Create a new ellipse shape
     #[wasm_bindgen]
     pub fn create_ellipse(&mut self, x: f64, y: f64, width: f64, height: f64) -> u32 {
+        // Save state before operation
+        self.save_state();
+
         let id = ShapeId(self.next_id);
         self.next_id += 1;
 
@@ -276,6 +357,13 @@ impl WhiteboardCore {
     /// Delete selected shapes
     #[wasm_bindgen]
     pub fn delete_selected(&mut self) -> usize {
+        if self.selected_shapes.is_empty() {
+            return 0;
+        }
+
+        // Save state before operation
+        self.save_state();
+
         let deleted_count = self.selected_shapes.len();
         for &shape_id in &self.selected_shapes {
             self.shapes.remove(&shape_id);
@@ -287,6 +375,13 @@ impl WhiteboardCore {
     /// Clear all shapes
     #[wasm_bindgen]
     pub fn clear_all(&mut self) {
+        if self.shapes.is_empty() {
+            return;
+        }
+
+        // Save state before operation
+        self.save_state();
+
         self.shapes.clear();
         self.selected_shapes.clear();
     }
@@ -340,6 +435,9 @@ impl WhiteboardCore {
     /// Start creating a shape with click and drag
     #[wasm_bindgen]
     pub fn start_shape_creation(&mut self, x: f64, y: f64, shape_type: &str) {
+        // Save state before creating the shape
+        self.save_state();
+
         // Convert screen coordinates to world coordinates
         let world_x = (x / self.camera_scale as f64) + self.camera_translation[0] as f64;
         let world_y = (y / self.camera_scale as f64) + self.camera_translation[1] as f64;
@@ -420,7 +518,7 @@ impl WhiteboardCore {
 
         let shape_id = self.creation_shape_id?;
 
-        // Reset creation state
+        // Reset creation state (state was already saved in start_shape_creation)
         self.is_creating_shape = false;
         self.creation_start = None;
         self.creation_current = None;
@@ -450,6 +548,73 @@ impl WhiteboardCore {
     pub fn is_creating_shape(&self) -> bool {
         self.is_creating_shape
     }
+
+    /// Check if undo is available
+    #[wasm_bindgen]
+    pub fn can_undo(&self) -> bool {
+        self.history.can_undo()
+    }
+
+    /// Check if redo is available
+    #[wasm_bindgen]
+    pub fn can_redo(&self) -> bool {
+        self.history.can_redo()
+    }
+
+    /// Undo the last operation
+    #[wasm_bindgen]
+    pub fn undo(&mut self) {
+        if self.history.can_undo() {
+            // Save current state to redo stack before undoing
+            let current_state = CanvasState {
+                shapes: self.shapes.clone(),
+                selected_shapes: self.selected_shapes.clone(),
+                next_id: self.next_id,
+            };
+
+            // Get the previous state and save current state to redo stack
+            if let Some(previous_state) = self.history.undo_with_current_state(current_state) {
+                self.restore_state(previous_state);
+            }
+        }
+    }
+
+    /// Redo the last undone operation
+    #[wasm_bindgen]
+    pub fn redo(&mut self) {
+        if self.history.can_redo() {
+            // Save current state to undo stack before redoing
+            let current_state = CanvasState {
+                shapes: self.shapes.clone(),
+                selected_shapes: self.selected_shapes.clone(),
+                next_id: self.next_id,
+            };
+
+            // Get the next state and save current state to undo stack
+            if let Some(next_state) = self.history.redo_with_current_state(current_state) {
+                self.restore_state(next_state);
+            }
+        }
+    }
+
+    /// Save current state for undo/redo (call before any operation)
+    fn save_state(&mut self) {
+        let state = CanvasState {
+            shapes: self.shapes.clone(),
+            selected_shapes: self.selected_shapes.clone(),
+            next_id: self.next_id,
+        };
+        self.history.push_state(state);
+    }
+
+    /// Restore a previous state
+    fn restore_state(&mut self, state: CanvasState) {
+        self.shapes = state.shapes;
+        self.selected_shapes = state.selected_shapes;
+        self.next_id = state.next_id;
+    }
+
+
 
     /// Get cursor type for resize handle at position (for cursor feedback)
     #[wasm_bindgen]
@@ -704,8 +869,11 @@ impl WhiteboardCore {
                     self.selected_shapes.push(shape_id);
                 }
             } else {
-                // Single-select mode: select only this shape (unless it's already the only selected one)
-                if self.selected_shapes.len() != 1 || !self.selected_shapes.contains(&shape_id) {
+                // Single-select mode: but preserve multi-selection if clicking on an already selected shape
+                if self.selected_shapes.contains(&shape_id) && self.selected_shapes.len() > 1 {
+                    // Don't change selection - keep all selected shapes for dragging
+                } else {
+                    // Select only this shape
                     self.selected_shapes.clear();
                     self.selected_shapes.push(shape_id);
                 }
@@ -713,6 +881,9 @@ impl WhiteboardCore {
 
             // Start dragging only if we have selected shapes
             if !self.selected_shapes.is_empty() {
+                // Save state before starting drag
+                self.save_state();
+
                 self.is_dragging = true;
                 self.drag_start = Some(Point { x: world_x, y: world_y });
 
