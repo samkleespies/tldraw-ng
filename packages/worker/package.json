@@ -1,0 +1,28 @@
+{
+  "name": "@tldraw-ng/worker",
+  "version": "0.1.0",
+  "description": "TypeScript worker that bridges core.wasm with the UI thread",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "lint": "eslint src --ext .ts,.tsx",
+    "format": "prettier --write src/**/*.{ts,tsx}",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "core": "file:../../crates/core/pkg"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "vite": "^5.0.0",
+    "vitest": "^1.0.0",
+    "eslint": "^8.0.0",
+    "prettier": "^3.0.0"
+  },
+  "files": [
+    "dist"
+  ]
+}

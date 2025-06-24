@@ -1,0 +1,41 @@
+{
+  "name": "tldraw-ng",
+  "version": "0.1.0",
+  "description": "Next-generation, high-performance tldraw clone built with Rust + WebGPU",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm run build:wasm && pnpm -r --parallel dev",
+    "build": "pnpm run build:wasm && pnpm -r build",
+    "build:wasm": "cd crates/core && wasm-pack build --target web --out-dir pkg",
+    "lint": "pnpm -r lint",
+    "format": "pnpm -r format",
+    "test": "pnpm run test:rust && pnpm run test:e2e",
+    "test:rust": "cd crates/core && wasm-pack test --headless --chrome",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:debug": "playwright test --debug",
+    "test:install": "playwright install",
+    "test:report": "playwright show-report",
+    "postinstall": "rustup target add wasm32-unknown-unknown && pnpm run build:wasm"
+  },
+  "packageManager": "pnpm@9.1.0",
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "keywords": [
+    "tldraw",
+    "whiteboard",
+    "rust",
+    "webgpu",
+    "wasm",
+    "solidjs",
+    "drawing"
+  ],
+  "author": "tldraw-ng contributors",
+  "license": "MIT"
+}
