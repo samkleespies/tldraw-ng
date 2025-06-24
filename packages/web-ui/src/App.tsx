@@ -18,11 +18,12 @@ type MsgFromUI =
   | { type: 'createShape'; tool: 'rectangle' | 'ellipse'; x: number; y: number; width?: number; height?: number }
   | { type: 'panCamera'; dx: number; dy: number };
 
-type MsgFromWorker =
-  | { type: 'initialized' }
-  | { type: 'selectionChanged'; selectedIds: string[] }
-  | { type: 'shapeCountChanged'; count: number }
-  | { type: 'error'; message: string };
+// Legacy type - kept for potential future worker implementation
+// type MsgFromWorker =
+//   | { type: 'initialized' }
+//   | { type: 'selectionChanged'; selectedIds: string[] }
+//   | { type: 'shapeCountChanged'; count: number }
+//   | { type: 'error'; message: string };
 
 type Tool = 'select' | 'rectangle' | 'ellipse';
 
@@ -41,7 +42,7 @@ const App: Component = () => {
   const [isCreatingShape, setIsCreatingShape] = createSignal(false);
 
   let canvasRef: HTMLCanvasElement | undefined;
-  let worker: Worker | null = null;
+  // let worker: Worker | null = null; // Legacy - not used in current implementation
   let isMiddleMouseDown = false;
   let shapeCreationStartPos = { x: 0, y: 0 };
   let isWaitingForShapeCreation = false;
@@ -55,9 +56,10 @@ const App: Component = () => {
   });
 
   onCleanup(() => {
-    if (worker) {
-      worker.terminate();
-    }
+    // Note: worker is always null in current implementation
+    // if (worker) {
+    //   worker.terminate();
+    // }
     window.removeEventListener('keydown', handleKeyDown);
     window.removeEventListener('mouseup', handleGlobalMouseUp);
   });
@@ -159,12 +161,15 @@ const App: Component = () => {
 
           if (dragDistance > 3) { // 3px tolerance for tiny movements
             // Start drag creation on significant movement
-            sendToCore({
-              type: 'startShapeCreation',
-              tool: selectedTool(),
-              x: shapeCreationStartPos.x,
-              y: shapeCreationStartPos.y
-            });
+            const currentTool = selectedTool();
+            if (currentTool !== 'select') {
+              sendToCore({
+                type: 'startShapeCreation',
+                tool: currentTool,
+                x: shapeCreationStartPos.x,
+                y: shapeCreationStartPos.y
+              });
+            }
             isWaitingForShapeCreation = false;
             // Then update with current position
             sendToCore({
@@ -600,8 +605,9 @@ const App: Component = () => {
           disabled={!isInitialized()}
           title="Undo (Ctrl+Z)"
         >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M3 7v6h6M3 7l4-4M3 7l4 4"/>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 7v6h6"/>
+            <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>
           </svg>
         </button>
         <button
@@ -610,8 +616,9 @@ const App: Component = () => {
           disabled={!isInitialized()}
           title="Redo (Ctrl+Y)"
         >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M13 7v6H7M13 7l-4-4M13 7l-4 4"/>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 7v6h-6"/>
+            <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/>
           </svg>
         </button>
       </div>

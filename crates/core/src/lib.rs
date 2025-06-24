@@ -317,7 +317,7 @@ impl WhiteboardCore {
             id,
             position: Point { x, y },
             shape_type: ShapeType::Rectangle { width, height },
-            color: [0.2, 0.8, 0.2, 1.0], // Green
+            color: [1.0, 1.0, 1.0, 1.0], // White
         };
 
         self.shapes.insert(id, shape);
@@ -337,7 +337,7 @@ impl WhiteboardCore {
             id,
             position: Point { x, y },
             shape_type: ShapeType::Ellipse { width, height },
-            color: [1.0, 0.2, 0.2, 1.0], // Red
+            color: [1.0, 1.0, 1.0, 1.0], // White
         };
 
         self.shapes.insert(id, shape);
@@ -456,13 +456,13 @@ impl WhiteboardCore {
                 id,
                 position: Point { x: world_x, y: world_y },
                 shape_type: ShapeType::Rectangle { width: 1.0, height: 1.0 },
-                color: [0.2, 0.8, 0.2, 1.0], // Green
+                color: [1.0, 1.0, 1.0, 1.0], // White
             },
             "ellipse" => Shape {
                 id,
                 position: Point { x: world_x, y: world_y },
                 shape_type: ShapeType::Ellipse { width: 1.0, height: 1.0 },
-                color: [1.0, 0.2, 0.2, 1.0], // Red
+                color: [1.0, 1.0, 1.0, 1.0], // White
             },
             _ => return, // Unknown shape type
         };
@@ -1044,14 +1044,14 @@ impl WhiteboardCore {
     fn tessellate_shapes(&self) -> Vec<Vertex> {
         let mut vertices = Vec::new();
 
-        // Render shapes first (always in their original colors)
+        // Render shapes first as outlines (always in their original colors)
         for shape in self.shapes.values() {
             match &shape.shape_type {
                 ShapeType::Rectangle { width, height } => {
-                    self.tessellate_rectangle(&mut vertices, shape.position, *width, *height, shape.color);
+                    self.tessellate_rectangle_outline(&mut vertices, shape.position, *width, *height, shape.color, 2.0);
                 }
                 ShapeType::Ellipse { width, height } => {
-                    self.tessellate_ellipse(&mut vertices, shape.position, *width, *height, shape.color);
+                    self.tessellate_ellipse_outline(&mut vertices, shape.position, *width, *height, shape.color, 2.0);
                 }
             }
         }
@@ -1083,44 +1083,47 @@ impl WhiteboardCore {
         vertices
     }
 
-    fn tessellate_rectangle(&self, vertices: &mut Vec<Vertex>, pos: Point, width: f64, height: f64, color: [f32; 4]) {
-        let x = pos.x as f32;
-        let y = pos.y as f32;
-        let w = width as f32;
-        let h = height as f32;
+    // Note: These filled tessellation functions are no longer used since we switched to outline-only rendering
+    // Keeping them commented for potential future use
 
-        // Two triangles for a rectangle
-        vertices.extend_from_slice(&[
-            // Triangle 1
-            Vertex { position: [x, y], color, uv: [0.0, 0.0], shape_type: 0.0 },
-            Vertex { position: [x + w, y], color, uv: [1.0, 0.0], shape_type: 0.0 },
-            Vertex { position: [x, y + h], color, uv: [0.0, 1.0], shape_type: 0.0 },
-            // Triangle 2
-            Vertex { position: [x + w, y], color, uv: [1.0, 0.0], shape_type: 0.0 },
-            Vertex { position: [x + w, y + h], color, uv: [1.0, 1.0], shape_type: 0.0 },
-            Vertex { position: [x, y + h], color, uv: [0.0, 1.0], shape_type: 0.0 },
-        ]);
-    }
+    // fn tessellate_rectangle(&self, vertices: &mut Vec<Vertex>, pos: Point, width: f64, height: f64, color: [f32; 4]) {
+    //     let x = pos.x as f32;
+    //     let y = pos.y as f32;
+    //     let w = width as f32;
+    //     let h = height as f32;
 
-    fn tessellate_ellipse(&self, vertices: &mut Vec<Vertex>, pos: Point, width: f64, height: f64, color: [f32; 4]) {
-        let x = pos.x as f32;
-        let y = pos.y as f32;
-        let w = width as f32;
-        let h = height as f32;
+    //     // Two triangles for a rectangle
+    //     vertices.extend_from_slice(&[
+    //         // Triangle 1
+    //         Vertex { position: [x, y], color, uv: [0.0, 0.0], shape_type: 0.0 },
+    //         Vertex { position: [x + w, y], color, uv: [1.0, 0.0], shape_type: 0.0 },
+    //         Vertex { position: [x, y + h], color, uv: [0.0, 1.0], shape_type: 0.0 },
+    //         // Triangle 2
+    //         Vertex { position: [x + w, y], color, uv: [1.0, 0.0], shape_type: 0.0 },
+    //         Vertex { position: [x + w, y + h], color, uv: [1.0, 1.0], shape_type: 0.0 },
+    //         Vertex { position: [x, y + h], color, uv: [0.0, 1.0], shape_type: 0.0 },
+    //     ]);
+    // }
 
-        // Create a simple quad and let the fragment shader handle the circular shape
-        // This avoids the "sun" effect from triangle tessellation
-        vertices.extend_from_slice(&[
-            // Triangle 1
-            Vertex { position: [x, y], color, uv: [0.0, 0.0], shape_type: 1.0 },
-            Vertex { position: [x + w, y], color, uv: [1.0, 0.0], shape_type: 1.0 },
-            Vertex { position: [x, y + h], color, uv: [0.0, 1.0], shape_type: 1.0 },
-            // Triangle 2
-            Vertex { position: [x + w, y], color, uv: [1.0, 0.0], shape_type: 1.0 },
-            Vertex { position: [x + w, y + h], color, uv: [1.0, 1.0], shape_type: 1.0 },
-            Vertex { position: [x, y + h], color, uv: [0.0, 1.0], shape_type: 1.0 },
-        ]);
-    }
+    // fn tessellate_ellipse(&self, vertices: &mut Vec<Vertex>, pos: Point, width: f64, height: f64, color: [f32; 4]) {
+    //     let x = pos.x as f32;
+    //     let y = pos.y as f32;
+    //     let w = width as f32;
+    //     let h = height as f32;
+
+    //     // Create a simple quad and let the fragment shader handle the circular shape
+    //     // This avoids the "sun" effect from triangle tessellation
+    //     vertices.extend_from_slice(&[
+    //         // Triangle 1
+    //         Vertex { position: [x, y], color, uv: [0.0, 0.0], shape_type: 1.0 },
+    //         Vertex { position: [x + w, y], color, uv: [1.0, 0.0], shape_type: 1.0 },
+    //         Vertex { position: [x, y + h], color, uv: [0.0, 1.0], shape_type: 1.0 },
+    //         // Triangle 2
+    //         Vertex { position: [x + w, y], color, uv: [1.0, 0.0], shape_type: 1.0 },
+    //         Vertex { position: [x + w, y + h], color, uv: [1.0, 1.0], shape_type: 1.0 },
+    //         Vertex { position: [x, y + h], color, uv: [0.0, 1.0], shape_type: 1.0 },
+    //     ]);
+    // }
 
 
 
