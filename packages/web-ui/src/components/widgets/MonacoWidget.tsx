@@ -91,11 +91,10 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
           console.log('Could not clear language providers:', e);
         }
 
-        // Initialize Monaco Editor with worker-free configuration
-        // Use 'plaintext' instead of language-specific modes to avoid worker issues
+        // Initialize Monaco Editor with proper language support and mock workers
         editor = monaco.editor.create(containerRef, {
           value: getInitialContent(),
-          language: 'plaintext', // Force plaintext to avoid any language service workers
+          language: getLanguageFromFilePath(currentFilePath()),
           theme: 'vs-dark',
           ...getWorkerFreeEditorOptions()
         });
@@ -133,14 +132,20 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
               editor.setValue(fileContent || '');
             }
 
-            // Safely update language
+            // Update language based on file extension with mock worker support
             const model = editor.getModel?.();
             if (model && typeof monaco.editor.setModelLanguage === 'function') {
               const language = getLanguageFromFilePath(filePath);
               try {
                 monaco.editor.setModelLanguage(model, language);
               } catch (langErr) {
-                // Silently handle language setting errors
+                console.warn('Failed to set language:', langErr);
+                // Fallback to plaintext if language setting fails
+                try {
+                  monaco.editor.setModelLanguage(model, 'plaintext');
+                } catch (fallbackErr) {
+                  console.warn('Failed to set fallback language:', fallbackErr);
+                }
               }
             }
           } catch (err) {
@@ -347,12 +352,22 @@ export default defineConfig({
     }
   });
 
-  // React to language changes
+  // React to language changes with mock worker support
   createEffect(() => {
     if (editor && isLoaded()) {
       const model = editor.getModel();
       if (model) {
-        monaco.editor.setModelLanguage(model, props.language);
+        try {
+          monaco.editor.setModelLanguage(model, props.language);
+        } catch (err) {
+          console.warn('Failed to set language:', err);
+          // Fallback to plaintext if language setting fails
+          try {
+            monaco.editor.setModelLanguage(model, 'plaintext');
+          } catch (fallbackErr) {
+            console.warn('Failed to set fallback language:', fallbackErr);
+          }
+        }
       }
     }
   });

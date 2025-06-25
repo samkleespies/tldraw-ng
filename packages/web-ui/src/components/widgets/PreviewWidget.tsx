@@ -541,27 +541,6 @@ root.render(React.createElement(App));`;
         }
       }}
     >
-      {/* Mode toggle button */}
-      <div style="position: absolute; top: 8px; right: 8px; z-index: 20;">
-        <button
-          onClick={toggleMode}
-          onMouseDown={(e) => e.stopPropagation()} // Prevent drag when clicking button
-          style={`
-            padding: 4px 8px;
-            font-size: 12px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            color: white;
-            background: ${mode() === 'file' ? '#16a34a' : '#6b7280'};
-            transition: background-color 0.2s;
-          `}
-          title={mode() === 'file' ? 'Switch to Server Preview' : 'Switch to File Preview'}
-        >
-          {mode() === 'file' ? '📄 File' : '🌐 Server'}
-        </button>
-      </div>
-
       {/* Draggable Browser Chrome Title Bar */}
       <div
         style="
@@ -573,6 +552,7 @@ root.render(React.createElement(App));`;
           border-radius: 8px 8px 0 0;
           cursor: move;
           user-select: none;
+          position: relative;
         "
         onMouseDown={(e) => {
           // Use the drag handler from context
@@ -586,12 +566,44 @@ root.render(React.createElement(App));`;
           <div style="width: 12px; height: 12px; background: #f59e0b; border-radius: 50%;"></div>
           <div style="width: 12px; height: 12px; background: #10b981; border-radius: 50%;"></div>
         </div>
-        <span style="color: #d1d5db; font-size: 13px; font-family: monospace; margin-left: auto;">
+
+        {/* Centered title text */}
+        <div style="
+          position: absolute;
+          left: 50%;
+          transform: translateX(-50%);
+          color: #d1d5db;
+          font-size: 13px;
+          font-family: monospace;
+          pointer-events: none;
+          white-space: nowrap;
+        ">
           {mode() === 'file'
             ? (activePath() ? `Preview - ${activePath()?.split('/').pop()}` : 'Preview')
             : (devServerUrl() ? 'Live Preview • tldraw-ng' : 'Server Preview')
           }
-        </span>
+        </div>
+
+        {/* Mode toggle button */}
+        <div style="margin-left: auto;">
+          <button
+            onClick={toggleMode}
+            onMouseDown={(e) => e.stopPropagation()} // Prevent drag when clicking button
+            style={`
+              padding: 4px 8px;
+              font-size: 12px;
+              border: none;
+              border-radius: 4px;
+              cursor: pointer;
+              color: white;
+              background: ${mode() === 'file' ? '#16a34a' : '#6b7280'};
+              transition: background-color 0.2s;
+            `}
+            title={mode() === 'file' ? 'Switch to Server Preview' : 'Switch to File Preview'}
+          >
+            {mode() === 'file' ? '📄 File' : '🌐 Server'}
+          </button>
+        </div>
       </div>
 
       {/* Content area */}

@@ -235,22 +235,23 @@ What would you like to know about these shapes?${contextInfo}`;
    * Format message content with shape references
    */
   const formatMessageContent = (content: string) => {
-    return content.replace(/@shape(\d+)/g, '<span style="background: #3b82f6; color: white; padding: 2px 6px; border-radius: 4px; font-size: 12px;">@shape$1</span>');
+    return content.replace(/@shape(\d+)/g, '<span style="background: #0e639c; color: white; padding: 2px 6px; border-radius: 4px; font-size: 12px;">@shape$1</span>');
   };
 
   return (
-    <div style={`width: 100%; height: 100%; display: flex; flex-direction: column; background: #f8fafc; ${!props.active ? 'pointer-events: none; opacity: 0.7;' : ''}`}>
+    <div style={`width: 100%; height: 100%; display: flex; flex-direction: column; background: #1e1e1e; ${!props.active ? 'pointer-events: none; opacity: 0.7;' : ''}`}>
       {/* Draggable Title Bar */}
       <div
         style="
-          background: #1e293b;
-          color: white;
+          background: #2d2d30;
+          color: #cccccc;
           padding: 12px 16px;
           display: flex;
           align-items: center;
           gap: 8px;
           cursor: move;
           user-select: none;
+          border-bottom: 1px solid #3e3e42;
         "
         onMouseDown={(e) => {
           // Use the drag handler from context
@@ -267,7 +268,7 @@ What would you like to know about these shapes?${contextInfo}`;
       </div>
 
       {/* Messages */}
-      <div 
+      <div
         ref={messagesRef}
         style="flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px;"
       >
@@ -275,9 +276,9 @@ What would you like to know about these shapes?${contextInfo}`;
           {(message) => (
             <div style={`display: flex; ${message.role === 'user' ? 'justify-content: flex-end;' : 'justify-content: flex-start;'}`}>
               <div style={`max-width: 80%; padding: 12px 16px; border-radius: 12px; ${
-                message.role === 'user' 
-                  ? 'background: #3b82f6; color: white;' 
-                  : 'background: white; border: 1px solid #e2e8f0; color: #1a202c;'
+                message.role === 'user'
+                  ? 'background: #0e639c; color: white;'
+                  : 'background: #2d2d30; border: 1px solid #3e3e42; color: #cccccc;'
               }`}>
                 <div style="white-space: pre-wrap; line-height: 1.5;" innerHTML={formatMessageContent(message.content)} />
                 <div style={`font-size: 11px; margin-top: 8px; opacity: 0.7; ${message.role === 'user' ? 'text-align: right;' : ''}`}>
@@ -287,14 +288,14 @@ What would you like to know about these shapes?${contextInfo}`;
             </div>
           )}
         </For>
-        
+
         {isLoading() && (
           <div style="display: flex; justify-content: flex-start;">
-            <div style="background: white; border: 1px solid #e2e8f0; padding: 12px 16px; border-radius: 12px; color: #6b7280;">
+            <div style="background: #2d2d30; border: 1px solid #3e3e42; padding: 12px 16px; border-radius: 12px; color: #cccccc;">
               <div style="display: flex; align-items: center; gap: 8px;">
-                <div style="width: 8px; height: 8px; background: #6b7280; border-radius: 50%; animation: pulse 1.5s infinite;"></div>
-                <div style="width: 8px; height: 8px; background: #6b7280; border-radius: 50%; animation: pulse 1.5s infinite 0.2s;"></div>
-                <div style="width: 8px; height: 8px; background: #6b7280; border-radius: 50%; animation: pulse 1.5s infinite 0.4s;"></div>
+                <div style="width: 8px; height: 8px; background: #cccccc; border-radius: 50%; animation: pulse 1.5s infinite;"></div>
+                <div style="width: 8px; height: 8px; background: #cccccc; border-radius: 50%; animation: pulse 1.5s infinite 0.2s;"></div>
+                <div style="width: 8px; height: 8px; background: #cccccc; border-radius: 50%; animation: pulse 1.5s infinite 0.4s;"></div>
                 <span style="margin-left: 8px;">AI is thinking...</span>
               </div>
             </div>
@@ -304,13 +305,13 @@ What would you like to know about these shapes?${contextInfo}`;
 
       {/* Error */}
       {error() && (
-        <div style="background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; padding: 12px 16px; margin: 0 16px;">
+        <div style="background: #3c1e1e; border: 1px solid #5c2626; color: #ff6b6b; padding: 12px 16px; margin: 0 16px;">
           <strong>Error:</strong> {error()}
         </div>
       )}
 
       {/* Input */}
-      <div style="background: white; border-top: 1px solid #e2e8f0; padding: 16px; display: flex; gap: 12px; align-items: end;">
+      <div style="background: #2d2d30; border-top: 1px solid #3e3e42; padding: 16px; display: flex; gap: 12px; align-items: end;">
         <textarea
           ref={inputRef}
           value={inputValue()}
@@ -318,7 +319,7 @@ What would you like to know about these shapes?${contextInfo}`;
           onKeyPress={handleKeyPress}
           onMouseDown={(e) => e.stopPropagation()} // Prevent drag when using input
           placeholder="Ask me anything... (use @shape123 to reference shapes)"
-          style="flex: 1; border: 1px solid #d1d5db; border-radius: 8px; padding: 12px; resize: none; font-family: inherit; min-height: 20px; max-height: 100px;"
+          style="flex: 1; border: 1px solid #3e3e42; border-radius: 8px; padding: 12px; resize: none; font-family: inherit; min-height: 20px; max-height: 100px; background: #1e1e1e; color: #cccccc;"
           rows="1"
           disabled={isLoading()}
         />
@@ -326,7 +327,7 @@ What would you like to know about these shapes?${contextInfo}`;
           onClick={sendMessage}
           onMouseDown={(e) => e.stopPropagation()} // Prevent drag when clicking button
           disabled={!inputValue().trim() || isLoading()}
-          style="background: #3b82f6; color: white; border: none; border-radius: 8px; padding: 12px 16px; cursor: pointer; font-weight: 600; disabled:opacity-50; disabled:cursor-not-allowed;"
+          style="background: #0e639c; color: white; border: none; border-radius: 8px; padding: 12px 16px; cursor: pointer; font-weight: 600; disabled:opacity-50; disabled:cursor-not-allowed;"
         >
           Send
         </button>
