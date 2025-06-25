@@ -304,7 +304,9 @@ export const TerminalWidget: Component<TerminalWidgetProps> = (props) => {
         overflow: hidden;
         display: flex;
         flex-direction: column;
-        border: 1px solid #333;
+        outline: none;
+        border: none;
+
         ${!props.active ? 'pointer-events: none; opacity: 0.7;' : ''}
       `}
     >

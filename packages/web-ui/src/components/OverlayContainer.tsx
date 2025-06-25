@@ -176,15 +176,14 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
   const handleWidgetClick = (e: MouseEvent, overlay: WidgetOverlay) => {
     e.stopPropagation();
 
-    // Focus the widget
+    // Clear any shape selection but don't add widgets to selection
+    // Widgets should never show selection outlines
     const core = (window as any).whiteboardCore;
     if (core) {
       if (typeof core.clear_selection === 'function') {
         core.clear_selection();
       }
-      if (typeof core.add_to_selection === 'function') {
-        core.add_to_selection(overlay.id);
-      }
+      // Don't add widgets to selection - they should have no visual selection outline
       if (typeof core.render_frame === 'function') {
         core.render_frame();
       }
@@ -273,6 +272,13 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
       border-radius: 8px;
       overflow: hidden;
       cursor: ${overlay.active ? 'default' : 'pointer'};
+      box-shadow: none !important;
+      outline: 0 !important;
+      border: 0 !important;
+      outline-width: 0 !important;
+      border-width: 0 !important;
+      outline-style: none !important;
+      border-style: none !important;
     `;
   };
 
@@ -480,7 +486,7 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
             <div style={subtitleStyle}>Application logs</div>
           </div>
         );
-      
+
       default:
         return (
           <div style={containerStyle}>

@@ -250,6 +250,7 @@ pub struct WhiteboardCore {
     is_dragging: bool,
     drag_start: Option<Point>,
     drag_offset: HashMap<ShapeId, Point>, // Offset from drag start to shape origin
+    dragged_widget: Option<ShapeId>, // Track which widget is being dragged (separate from selection)
     // Resize state
     is_resizing: bool,
     resize_handle: Option<ResizeHandle>,
@@ -285,6 +286,7 @@ impl WhiteboardCore {
             is_dragging: false,
             drag_start: None,
             drag_offset: HashMap::new(),
+            dragged_widget: None,
             // Resize state
             is_resizing: false,
             resize_handle: None,
@@ -579,6 +581,8 @@ impl WhiteboardCore {
         self.shapes.insert(id, shape);
         id.0
     }
+
+
 
     /// Toggle widget active state
     #[wasm_bindgen]
@@ -1030,6 +1034,11 @@ impl WhiteboardCore {
 
         let mut selected_shapes = Vec::new();
         for (id, shape) in &self.shapes {
+            // Skip widgets - they should never be selected via rectangle selection
+            if matches!(shape.shape_type, ShapeType::Widget { .. }) {
+                continue;
+            }
+
             let shape_bbox = shape.bounding_box();
 
             // Check if shape intersects with selection rectangle
@@ -1237,9 +1246,14 @@ impl WhiteboardCore {
             return;
         }
 
-        // Find shape under cursor
+        // Find shape under cursor (excluding widgets - they have their own interaction system)
         let mut hit_shape = None;
         for (id, shape) in &self.shapes {
+            // Skip widgets - they should never be selected via canvas clicks
+            if matches!(shape.shape_type, ShapeType::Widget { .. }) {
+                continue;
+            }
+
             if shape.bounding_box().contains_point(world_x, world_y) {
                 hit_shape = Some(*id);
                 break;
@@ -1332,11 +1346,19 @@ impl WhiteboardCore {
             }
         } else if self.is_dragging {
             // Handle dragging
-            // Update positions of all selected shapes
-            for &selected_id in &self.selected_shapes {
-                if let (Some(shape), Some(offset)) = (self.shapes.get_mut(&selected_id), self.drag_offset.get(&selected_id)) {
+            if let Some(widget_id) = self.dragged_widget {
+                // Dragging a widget - update only the widget position
+                if let (Some(shape), Some(offset)) = (self.shapes.get_mut(&widget_id), self.drag_offset.get(&widget_id)) {
                     shape.position.x = world_x + offset.x;
                     shape.position.y = world_y + offset.y;
+                }
+            } else {
+                // Dragging regular shapes - update positions of all selected shapes
+                for &selected_id in &self.selected_shapes {
+                    if let (Some(shape), Some(offset)) = (self.shapes.get_mut(&selected_id), self.drag_offset.get(&selected_id)) {
+                        shape.position.x = world_x + offset.x;
+                        shape.position.y = world_y + offset.y;
+                    }
                 }
             }
         }
@@ -1348,6 +1370,7 @@ impl WhiteboardCore {
         self.is_dragging = false;
         self.drag_start = None;
         self.drag_offset.clear();
+        self.dragged_widget = None;
 
         // End resizing
         self.is_resizing = false;
@@ -1378,12 +1401,12 @@ impl WhiteboardCore {
         // Save state before starting drag
         self.save_state();
 
-        // Select only this widget
+        // Don't add widgets to selected_shapes - they should have no visual selection outline
         self.selected_shapes.clear();
-        self.selected_shapes.push(shape_id);
 
-        // Start dragging
+        // Start dragging this specific widget
         self.is_dragging = true;
+        self.dragged_widget = Some(shape_id);
         self.drag_start = Some(Point { x: world_x, y: world_y });
 
         // Calculate drag offset for this widget
@@ -1456,6 +1479,9 @@ impl WhiteboardCore {
     /// Render a frame
     #[wasm_bindgen]
     pub fn render_frame(&mut self) {
+        // Clean up any widgets that might have accidentally gotten into selected_shapes
+        self.clean_widget_selection();
+
         // Split the borrow to avoid borrow checker issues
         let vertices = self.tessellate_shapes();
         if let Some(gpu) = &mut self.gpu {
@@ -1463,9 +1489,23 @@ impl WhiteboardCore {
         }
     }
 
+    /// Remove any widgets from the selected_shapes list - widgets should never be selected
+    fn clean_widget_selection(&mut self) {
+        self.selected_shapes.retain(|&shape_id| {
+            if let Some(shape) = self.shapes.get(&shape_id) {
+                !matches!(shape.shape_type, ShapeType::Widget { .. })
+            } else {
+                false // Remove invalid shape IDs too
+            }
+        });
+    }
+
     /// Tessellate all shapes into vertices for GPU rendering
     fn tessellate_shapes(&self) -> Vec<Vertex> {
         let mut vertices = Vec::new();
+
+        // Clean up any widgets that might have accidentally gotten into selected_shapes
+        // This is a safety measure to ensure widgets never show selection outlines
 
         // Render shapes first as outlines (always in their original colors)
         for shape in self.shapes.values() {
@@ -1476,23 +1516,20 @@ impl WhiteboardCore {
                 ShapeType::Ellipse { width, height } => {
                     self.tessellate_ellipse_outline(&mut vertices, shape.position, *width, *height, shape.color, 2.0);
                 }
-                ShapeType::Widget { width, height, active, .. } => {
-                    // Render widget as a rectangle outline
-                    // Use different colors based on active state
-                    let widget_color = if *active {
-                        [0.2, 0.8, 1.0, 1.0] // Bright blue for active widgets
-                    } else {
-                        [0.6, 0.6, 0.6, 1.0] // Gray for inactive widgets
-                    };
-                    self.tessellate_rectangle_outline(&mut vertices, shape.position, *width, *height, widget_color, 2.0);
+                ShapeType::Widget { .. } => {
+                    // Don't render any outline for widgets - show raw widget form only
+                    // Widgets are rendered by the overlay system, not the canvas
                 }
             }
         }
 
-        // Render selection outlines for selected shapes
+        // Render selection outlines for selected shapes (but never for widgets)
         for shape in self.shapes.values() {
             if self.selected_shapes.contains(&shape.id) {
-                self.tessellate_selection_outline(&mut vertices, shape);
+                // Double-check: never render selection outlines for widgets
+                if !matches!(shape.shape_type, ShapeType::Widget { .. }) {
+                    self.tessellate_selection_outline(&mut vertices, shape);
+                }
             }
         }
 
@@ -1597,8 +1634,8 @@ impl WhiteboardCore {
     }
 
     fn tessellate_selection_outline(&self, vertices: &mut Vec<Vertex>, shape: &Shape) {
-        let outline_color = [0.3, 0.6, 1.0, 1.0]; // Blue outline
-        let outline_width = 2.0; // Outline thickness
+        let outline_color = [0.5, 0.7, 1.0, 0.9]; // Subtle blue outline
+        let outline_width = 1.5; // Thinner outline
 
         match &shape.shape_type {
             ShapeType::Rectangle { width, height } => {
@@ -1607,8 +1644,8 @@ impl WhiteboardCore {
             ShapeType::Ellipse { width, height } => {
                 self.tessellate_ellipse_outline(&mut *vertices, shape.position, *width, *height, outline_color, outline_width);
             }
-            ShapeType::Widget { width, height, .. } => {
-                self.tessellate_rectangle_outline(&mut *vertices, shape.position, *width, *height, outline_color, outline_width);
+            ShapeType::Widget { .. } => {
+                // Don't render selection outline for widgets - keep them completely clean
             }
         }
     }

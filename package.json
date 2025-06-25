@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "pnpm run build:wasm && pnpm -r --parallel dev",
     "build": "pnpm run build:wasm && pnpm -r build",
-    "build:wasm": "cd crates/core && wasm-pack build --target web --out-dir pkg",
+    "build:wasm": "cd crates/core && wasm-pack build --target web --out-dir pkg && cd ../.. && pnpm run copy:wasm",
+    "copy:wasm": "copy \"crates\\core\\pkg\\*\" \"packages\\web-ui\\src\\wasm\\\"",
     "lint": "pnpm -r lint",
     "format": "pnpm -r format",
     "test": "pnpm run test:rust && pnpm run test:e2e",

@@ -215,6 +215,137 @@ body {
   z-index: 50;
 }
 
+/* Widget containers - COMPLETELY remove all outlines and borders */
+[data-widget-id] {
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  background-clip: padding-box !important;
+}
+
+/* Try targeting all possible widget elements */
+div[data-widget-id],
+div[data-widget-type],
+.widget-container,
+.monaco-widget,
+.terminal-widget,
+.explorer-widget,
+.preview-widget {
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+[data-widget-id]:focus,
+[data-widget-id]:focus-visible,
+[data-widget-id]:focus-within {
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Aggressive override for any blue styling */
+[data-widget-id],
+[data-widget-id] *,
+[data-widget-id]::before,
+[data-widget-id]::after {
+  border-color: transparent !important;
+  outline-color: transparent !important;
+}
+
+/* Remove any potential blue borders from specific elements */
+[data-widget-id] div,
+[data-widget-id] iframe,
+[data-widget-id] canvas {
+  border: none !important;
+  outline: none !important;
+}
+
+/* Target Monaco editor and xterm.js elements specifically */
+.monaco-editor,
+.monaco-editor *,
+.monaco-editor .view-overlays,
+.monaco-editor .margin,
+.monaco-editor .view-lines,
+.monaco-editor .decorationsOverviewRuler,
+.monaco-editor .minimap,
+.monaco-editor .scroll-decoration,
+.xterm,
+.xterm *,
+.xterm-viewport,
+.xterm-screen,
+.terminal,
+.terminal * {
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Very aggressive approach - target any blue borders */
+*[style*="border"][style*="blue"],
+*[style*="border"][style*="#007acc"],
+*[style*="border"][style*="rgb(0, 122, 204)"],
+*[style*="outline"][style*="blue"],
+*[style*="outline"][style*="#007acc"] {
+  border: none !important;
+  outline: none !important;
+}
+
+/* Target specific Monaco classes that might have borders */
+.monaco-editor .focused,
+.monaco-editor:focus,
+.monaco-editor:focus-within {
+  outline: none !important;
+  border: none !important;
+}
+
+/* Remove all possible focus outlines from any element */
+*:focus,
+*:focus-visible,
+*:focus-within,
+*[tabindex]:focus,
+*[tabindex]:focus-visible {
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Specifically target divs that might be getting focus */
+div:focus,
+div:focus-visible,
+div[tabindex]:focus {
+  outline: none !important;
+  border: none !important;
+}
+
+/* FORCE remove all outlines and borders from widget containers */
+div[data-widget-id] {
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+div[data-widget-id]:focus,
+div[data-widget-id]:focus-visible,
+div[data-widget-id]:focus-within {
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Override any possible blue border/outline with maximum specificity */
+div[data-widget-id][data-widget-type] {
+  outline: 0 !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+
+
+
+
+
+
 /* Utility classes - dark theme */
 .text-success {
   color: #51cf66;

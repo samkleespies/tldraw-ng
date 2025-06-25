@@ -254,7 +254,6 @@ export function WidgetLinkingProvider(props: {
     }));
 
     // Broadcast file change event
-    console.log('Broadcasting file-updated event:', filePath);
     window.dispatchEvent(new CustomEvent('file-updated', {
       detail: { filePath, content }
     }));

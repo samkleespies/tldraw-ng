@@ -56,7 +56,6 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
           // Remove leading slash and write to WebContainer
           const cleanPath = filePath.replace(/^\//, '');
           await webcontainerInstance.fs.writeFile(cleanPath, content);
-          console.log('Updated WebContainer file:', cleanPath);
         } catch (error) {
           console.error('Error updating WebContainer file:', error);
         }
@@ -434,12 +433,14 @@ export default defineConfig({
       style={`
         width: 100%;
         height: 100%;
-        border: 1px solid #e0e0e0;
+
         border-radius: 8px;
         overflow: hidden;
         background-color: #1e1e1e;
         display: flex;
         flex-direction: column;
+        outline: none;
+        border: none;
         ${!props.active ? 'pointer-events: none; opacity: 0.7;' : ''}
       `}
       onWheel={(e) => {
