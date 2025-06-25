@@ -1,24 +1,15 @@
 import { Component, createSignal, onMount, onCleanup, createEffect } from 'solid-js';
 import { useWidgetLinking } from '../../context/WidgetLinkingContext';
 import { WebContainer } from '@webcontainer/api';
-
-// Configure Monaco environment to avoid worker issues
-if (typeof window !== 'undefined') {
-  (window as any).MonacoEnvironment = {
-    getWorker: function (workerId: string, label: string) {
-      // Disable all workers to avoid CORS and loading issues
-      return null;
-    },
-    getWorkerUrl: function (workerId: string, label: string) {
-      // Return empty string to prevent worker loading attempts
-      return '';
-    }
-  };
-}
+import { configureMonacoLanguages, getWorkerFreeEditorOptions } from '../../utils/monaco-config';
 
 // Dynamic import to avoid build issues
 const loadMonaco = async () => {
   const monaco = await import('monaco-editor');
+
+  // Configure language services to disable workers
+  configureMonacoLanguages(monaco);
+
   return monaco;
 };
 
@@ -83,38 +74,30 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
         // Load Monaco dynamically
         const monaco = await loadMonaco();
 
-        // Initialize Monaco Editor with minimal configuration to avoid worker issues
+        // Disable all language features before creating editor
+        try {
+          // Unregister all language providers to prevent worker loading
+          monaco.languages.getLanguages().forEach(lang => {
+            if (lang.id === 'typescript' || lang.id === 'javascript') {
+              try {
+                // Clear any existing providers
+                monaco.languages.setLanguageConfiguration(lang.id, {});
+              } catch (e) {
+                console.log('Could not clear language config for', lang.id);
+              }
+            }
+          });
+        } catch (e) {
+          console.log('Could not clear language providers:', e);
+        }
+
+        // Initialize Monaco Editor with worker-free configuration
+        // Use 'plaintext' instead of language-specific modes to avoid worker issues
         editor = monaco.editor.create(containerRef, {
           value: getInitialContent(),
-          language: getLanguageFromFilePath(currentFilePath()),
+          language: 'plaintext', // Force plaintext to avoid any language service workers
           theme: 'vs-dark',
-          automaticLayout: true,
-          minimap: { enabled: false },
-          scrollBeyondLastLine: false,
-          fontSize: 14,
-          wordWrap: 'on',
-          // Disable all features that might require workers or cause errors
-          quickSuggestions: false,
-          suggestOnTriggerCharacters: false,
-          parameterHints: { enabled: false },
-          codeLens: false,
-          lightbulb: { enabled: false },
-          hover: { enabled: false },
-          folding: false,
-          links: false,
-          colorDecorators: false,
-          contextmenu: false,
-          mouseWheelZoom: false,
-          // Additional worker-related features to disable
-          wordBasedSuggestions: false,
-          semanticHighlighting: { enabled: false },
-          occurrencesHighlight: false,
-          renderValidationDecorations: 'off',
-          // Disable language services that might cause worker issues
-          'bracketPairColorization.enabled': false,
-          'editor.inlineSuggest.enabled': false,
-          'editor.suggest.showWords': false,
-          'editor.suggest.showSnippets': false
+          ...getWorkerFreeEditorOptions()
         });
 
         // Auto-apply changes when editor content changes with error handling
@@ -332,10 +315,35 @@ export default defineConfig({
     }
   };
 
-  // React to size changes
+  // React to size changes and status bar visibility
   createEffect(() => {
     if (editor && isLoaded()) {
-      editor.layout({ width: props.width, height: props.height });
+      // Use setTimeout to ensure the container has been resized first
+      setTimeout(() => {
+        if (editor) {
+          // Let Monaco handle the layout automatically since the container uses flex: 1
+          editor.layout();
+          // Force a second layout call to ensure proper sizing
+          setTimeout(() => {
+            if (editor) {
+              editor.layout();
+            }
+          }, 10);
+        }
+      }, 10);
+    }
+  });
+
+  // Watch specifically for status bar visibility changes
+  createEffect(() => {
+    const showStatusBar = props.height > 120;
+    if (editor && isLoaded()) {
+      // Trigger layout when status bar visibility changes
+      setTimeout(() => {
+        if (editor) {
+          editor.layout();
+        }
+      }, 50); // Slightly longer delay to ensure DOM has updated
     }
   });
 
@@ -450,21 +458,22 @@ export default defineConfig({
         }
       }}
     >
-      {/* Draggable Title Bar */}
+      {/* Draggable Title Bar - Responsive height */}
       <div
-        style="
-          height: 40px;
+        style={`
+          height: ${props.height > 100 ? '40px' : '28px'};
           background-color: #2d2d30;
           border-bottom: 1px solid #3e3e42;
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 0 12px;
+          padding: 0 ${props.width > 300 ? '12px' : '8px'};
           color: #cccccc;
-          font-size: 14px;
+          font-size: ${props.height > 100 ? '14px' : '12px'};
           cursor: move;
           user-select: none;
-        "
+          flex-shrink: 0;
+        `}
         onMouseDown={(e) => {
           // Use the drag handler from context
           if (handleTitleBarDrag) {
@@ -481,9 +490,9 @@ export default defineConfig({
             return filePath.split('/').pop() || 'Code Editor';
           })()}
         </span>
-        <div style="display: flex; gap: 8px;">
-          {!isLoaded() && <span style="font-size: 12px;">Loading...</span>}
-          {isLoaded() && (
+        <div style={`display: flex; gap: ${props.width > 300 ? '8px' : '4px'};`}>
+          {!isLoaded() && props.width > 200 && <span style="font-size: 12px;">Loading...</span>}
+          {isLoaded() && props.width > 150 && (
             <button
               onClick={handleRunProject}
               onMouseDown={(e) => e.stopPropagation()} // Prevent drag when clicking button
@@ -491,20 +500,33 @@ export default defineConfig({
                 background-color: ${runStatus() === 'ready' ? '#4CAF50' : runStatus() === 'error' ? '#f44336' : '#0e639c'};
                 color: white;
                 border: none;
-                padding: 4px 8px;
+                padding: ${props.height > 100 ? '4px 8px' : '2px 6px'};
                 border-radius: 4px;
-                font-size: 12px;
+                font-size: ${props.height > 100 ? '12px' : '10px'};
                 cursor: ${runStatus() === 'idle' ? 'pointer' : 'default'};
                 opacity: ${runStatus() === 'idle' ? '1' : '0.8'};
               `}
               disabled={runStatus() !== 'idle'}
             >
-              {runStatus() === 'idle' && '▶ Run'}
-              {runStatus() === 'booting' && '🔄 Booting...'}
-              {runStatus() === 'installing' && '📦 Installing...'}
-              {runStatus() === 'running' && '🚀 Starting...'}
-              {runStatus() === 'ready' && '✅ Ready'}
-              {runStatus() === 'error' && '❌ Error'}
+              {props.width > 250 ? (
+                <>
+                  {runStatus() === 'idle' && '▶ Run'}
+                  {runStatus() === 'booting' && '🔄 Booting...'}
+                  {runStatus() === 'installing' && '📦 Installing...'}
+                  {runStatus() === 'running' && '🚀 Starting...'}
+                  {runStatus() === 'ready' && '✅ Ready'}
+                  {runStatus() === 'error' && '❌ Error'}
+                </>
+              ) : (
+                <>
+                  {runStatus() === 'idle' && '▶'}
+                  {runStatus() === 'booting' && '🔄'}
+                  {runStatus() === 'installing' && '📦'}
+                  {runStatus() === 'running' && '🚀'}
+                  {runStatus() === 'ready' && '✅'}
+                  {runStatus() === 'error' && '❌'}
+                </>
+              )}
             </button>
           )}
         </div>
@@ -546,24 +568,27 @@ export default defineConfig({
         )}
       </div>
 
-      {/* Status Bar */}
-      <div style="
-        height: 24px;
-        background-color: #007acc;
-        display: flex;
-        align-items: center;
-        padding: 0 12px;
-        font-size: 12px;
-        color: white;
-      ">
-        {!isLoaded() ? 'Setting up environment...' :
-         runStatus() === 'ready' && devServerUrl() ? `Ready • Server: ${devServerUrl()}` :
-         runStatus() === 'booting' ? 'Booting WebContainer...' :
-         runStatus() === 'installing' ? 'Installing dependencies...' :
-         runStatus() === 'running' ? 'Starting dev server...' :
-         runStatus() === 'error' ? 'Error occurred' :
-         'Ready'}
-      </div>
+      {/* Status Bar - Hide when widget is too small */}
+      {props.height > 120 && (
+        <div style="
+          height: 24px;
+          background-color: #007acc;
+          display: flex;
+          align-items: center;
+          padding: 0 12px;
+          font-size: 12px;
+          color: white;
+          flex-shrink: 0;
+        ">
+          {!isLoaded() ? 'Setting up environment...' :
+           runStatus() === 'ready' && devServerUrl() ? `Ready • Server: ${devServerUrl()}` :
+           runStatus() === 'booting' ? 'Booting WebContainer...' :
+           runStatus() === 'installing' ? 'Installing dependencies...' :
+           runStatus() === 'running' ? 'Starting dev server...' :
+           runStatus() === 'error' ? 'Error occurred' :
+           'Ready'}
+        </div>
+      )}
     </div>
   );
 };

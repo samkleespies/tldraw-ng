@@ -251,12 +251,13 @@ pub struct WhiteboardCore {
     drag_start: Option<Point>,
     drag_offset: HashMap<ShapeId, Point>, // Offset from drag start to shape origin
     dragged_widget: Option<ShapeId>, // Track which widget is being dragged (separate from selection)
+    // Widget selection state (separate from regular shape selection)
+    selected_widget: Option<ShapeId>, // Track which widget is selected for resize handles
     // Resize state
     is_resizing: bool,
     resize_handle: Option<ResizeHandle>,
     resize_shape_id: Option<ShapeId>,
     resize_start_bounds: Option<BoundingBox>,
-    resize_original_shape: Option<Shape>, // Store original shape for undo
     // Selection rectangle state
     is_selection_dragging: bool,
     selection_start: Option<Point>,
@@ -287,12 +288,13 @@ impl WhiteboardCore {
             drag_start: None,
             drag_offset: HashMap::new(),
             dragged_widget: None,
+            // Widget selection state
+            selected_widget: None,
             // Resize state
             is_resizing: false,
             resize_handle: None,
             resize_shape_id: None,
             resize_start_bounds: None,
-            resize_original_shape: None,
             // Selection rectangle state
             is_selection_dragging: false,
             selection_start: None,
@@ -387,18 +389,32 @@ impl WhiteboardCore {
     /// Delete selected shapes
     #[wasm_bindgen]
     pub fn delete_selected(&mut self) -> usize {
-        if self.selected_shapes.is_empty() {
+        let mut deleted_count = 0;
+
+        // Check if we have any shapes or widgets to delete
+        if self.selected_shapes.is_empty() && self.selected_widget.is_none() {
             return 0;
         }
 
         // Save state before operation
         self.save_state();
 
-        let deleted_count = self.selected_shapes.len();
-        for &shape_id in &self.selected_shapes {
-            self.shapes.remove(&shape_id);
+        // Delete selected regular shapes
+        if !self.selected_shapes.is_empty() {
+            deleted_count += self.selected_shapes.len();
+            for &shape_id in &self.selected_shapes {
+                self.shapes.remove(&shape_id);
+            }
+            self.selected_shapes.clear();
         }
-        self.selected_shapes.clear();
+
+        // Delete selected widget
+        if let Some(widget_id) = self.selected_widget {
+            self.shapes.remove(&widget_id);
+            self.selected_widget = None;
+            deleted_count += 1;
+        }
+
         deleted_count
     }
 
@@ -1053,13 +1069,22 @@ impl WhiteboardCore {
         selected_shapes
     }
 
-    /// Get resize handles for selected shapes
+    /// Get resize handles for selected shapes or widgets
     fn get_resize_handles(&self) -> Vec<ResizeHandleInfo> {
         let mut handles = Vec::new();
 
-        // Only show resize handles if exactly one shape is selected
-        if self.selected_shapes.len() == 1 {
-            let shape_id = self.selected_shapes[0];
+        // Determine which shape to show resize handles for
+        let target_shape_id = if self.selected_shapes.len() == 1 {
+            // Regular shape is selected
+            Some(self.selected_shapes[0])
+        } else if let Some(widget_id) = self.selected_widget {
+            // Widget is selected
+            Some(widget_id)
+        } else {
+            None
+        };
+
+        if let Some(shape_id) = target_shape_id {
             if let Some(shape) = self.shapes.get(&shape_id) {
                 let bbox = shape.bounding_box();
                 let handle_size = 8.0; // Handle size in pixels
@@ -1135,8 +1160,11 @@ impl WhiteboardCore {
 
             if handle_bbox.contains_point(world_x, world_y) {
                 // Return the handle type and the shape being resized
+                // Check both regular shapes and widgets
                 if let Some(&shape_id) = self.selected_shapes.first() {
                     return Some((handle.handle_type, shape_id));
+                } else if let Some(widget_id) = self.selected_widget {
+                    return Some((handle.handle_type, widget_id));
                 }
             }
         }
@@ -1151,13 +1179,19 @@ impl WhiteboardCore {
             new_width: None,
             new_height: None,
         };
+        // Set minimum size based on shape type
+        let (min_width, min_height) = match &shape.shape_type {
+            ShapeType::Widget { .. } => (200.0, 150.0), // Larger minimum for widgets to show content
+            _ => (10.0, 10.0), // Small minimum for basic shapes
+        };
+
         match &shape.shape_type {
             ShapeType::Rectangle { .. } | ShapeType::Ellipse { .. } | ShapeType::Widget { .. } => {
                 match handle_type {
                     ResizeHandle::TopLeft => {
                         let new_width = start_bounds.max_x - mouse_x;
                         let new_height = start_bounds.max_y - mouse_y;
-                        if new_width > 10.0 && new_height > 10.0 {
+                        if new_width > min_width && new_height > min_height {
                             resize_data.new_width = Some(new_width);
                             resize_data.new_height = Some(new_height);
                             resize_data.new_position = Some(Point { x: mouse_x, y: mouse_y });
@@ -1166,7 +1200,7 @@ impl WhiteboardCore {
                     ResizeHandle::TopRight => {
                         let new_width = mouse_x - start_bounds.min_x;
                         let new_height = start_bounds.max_y - mouse_y;
-                        if new_width > 10.0 && new_height > 10.0 {
+                        if new_width > min_width && new_height > min_height {
                             resize_data.new_width = Some(new_width);
                             resize_data.new_height = Some(new_height);
                             resize_data.new_position = Some(Point { x: shape.position.x, y: mouse_y });
@@ -1175,7 +1209,7 @@ impl WhiteboardCore {
                     ResizeHandle::BottomLeft => {
                         let new_width = start_bounds.max_x - mouse_x;
                         let new_height = mouse_y - start_bounds.min_y;
-                        if new_width > 10.0 && new_height > 10.0 {
+                        if new_width > min_width && new_height > min_height {
                             resize_data.new_width = Some(new_width);
                             resize_data.new_height = Some(new_height);
                             resize_data.new_position = Some(Point { x: mouse_x, y: shape.position.y });
@@ -1184,34 +1218,34 @@ impl WhiteboardCore {
                     ResizeHandle::BottomRight => {
                         let new_width = mouse_x - start_bounds.min_x;
                         let new_height = mouse_y - start_bounds.min_y;
-                        if new_width > 10.0 && new_height > 10.0 {
+                        if new_width > min_width && new_height > min_height {
                             resize_data.new_width = Some(new_width);
                             resize_data.new_height = Some(new_height);
                         }
                     }
                     ResizeHandle::Top => {
                         let new_height = start_bounds.max_y - mouse_y;
-                        if new_height > 10.0 {
+                        if new_height > min_height {
                             resize_data.new_height = Some(new_height);
                             resize_data.new_position = Some(Point { x: shape.position.x, y: mouse_y });
                         }
                     }
                     ResizeHandle::Bottom => {
                         let new_height = mouse_y - start_bounds.min_y;
-                        if new_height > 10.0 {
+                        if new_height > min_height {
                             resize_data.new_height = Some(new_height);
                         }
                     }
                     ResizeHandle::Left => {
                         let new_width = start_bounds.max_x - mouse_x;
-                        if new_width > 10.0 {
+                        if new_width > min_width {
                             resize_data.new_width = Some(new_width);
                             resize_data.new_position = Some(Point { x: mouse_x, y: shape.position.y });
                         }
                     }
                     ResizeHandle::Right => {
                         let new_width = mouse_x - start_bounds.min_x;
-                        if new_width > 10.0 {
+                        if new_width > min_width {
                             resize_data.new_width = Some(new_width);
                         }
                     }
@@ -1261,6 +1295,9 @@ impl WhiteboardCore {
         }
 
         if let Some(shape_id) = hit_shape {
+            // Clear widget selection when selecting regular shapes
+            self.selected_widget = None;
+
             if ctrl_key {
                 // Multi-select mode: toggle selection of the clicked shape
                 if self.selected_shapes.contains(&shape_id) {
@@ -1304,6 +1341,8 @@ impl WhiteboardCore {
             // Start selection rectangle drag when clicking on empty space
             if !ctrl_key {
                 self.selected_shapes.clear();
+                // Also clear widget selection when clicking on empty space
+                self.selected_widget = None;
             }
 
             // Start selection rectangle dragging
@@ -1384,6 +1423,57 @@ impl WhiteboardCore {
         self.selection_current = None;
     }
 
+    /// Select a widget for resize handles (without starting drag)
+    #[wasm_bindgen]
+    pub fn select_widget(&mut self, widget_id: u32) {
+        let shape_id = ShapeId(widget_id);
+
+        // Check if the widget exists
+        if !self.shapes.contains_key(&shape_id) {
+            return;
+        }
+
+        // Clear regular shape selection and set widget selection
+        self.selected_shapes.clear();
+        self.selected_widget = Some(shape_id);
+    }
+
+    /// Get resize handles for overlay rendering (returns screen coordinates)
+    #[wasm_bindgen]
+    pub fn get_resize_handles_for_overlay(&self) -> js_sys::Array {
+        let handles = self.get_resize_handles();
+        let js_array = js_sys::Array::new();
+
+        for handle in handles {
+            let js_handle = js_sys::Object::new();
+
+            // Convert handle type to string
+            let handle_type_str = match handle.handle_type {
+                ResizeHandle::TopLeft => "nw",
+                ResizeHandle::TopRight => "ne",
+                ResizeHandle::BottomLeft => "sw",
+                ResizeHandle::BottomRight => "se",
+                ResizeHandle::Top => "n",
+                ResizeHandle::Bottom => "s",
+                ResizeHandle::Left => "w",
+                ResizeHandle::Right => "e",
+            };
+
+            // Convert world coordinates to screen coordinates
+            let screen_x = (handle.position.x - self.camera_translation[0] as f64) * self.camera_scale as f64;
+            let screen_y = (handle.position.y - self.camera_translation[1] as f64) * self.camera_scale as f64;
+
+            js_sys::Reflect::set(&js_handle, &"type".into(), &handle_type_str.into()).unwrap();
+            js_sys::Reflect::set(&js_handle, &"x".into(), &screen_x.into()).unwrap();
+            js_sys::Reflect::set(&js_handle, &"y".into(), &screen_y.into()).unwrap();
+            js_sys::Reflect::set(&js_handle, &"size".into(), &handle.size.into()).unwrap();
+
+            js_array.push(&js_handle);
+        }
+
+        js_array
+    }
+
     /// Start dragging a specific widget from its title bar
     #[wasm_bindgen]
     pub fn start_widget_drag(&mut self, widget_id: u32, x: f64, y: f64) {
@@ -1403,6 +1493,9 @@ impl WhiteboardCore {
 
         // Don't add widgets to selected_shapes - they should have no visual selection outline
         self.selected_shapes.clear();
+
+        // Select this widget for resize handles
+        self.selected_widget = Some(shape_id);
 
         // Start dragging this specific widget
         self.is_dragging = true;
@@ -1542,13 +1635,8 @@ impl WhiteboardCore {
 
         // No need for preview rendering - we modify the actual shape in real-time
 
-        // Render resize handles on top
-        if !self.is_dragging && !self.is_resizing && !self.is_selection_dragging && !self.is_creating_shape {
-            let handles = self.get_resize_handles();
-            for handle in handles {
-                self.tessellate_resize_handle(&mut vertices, handle);
-            }
-        }
+        // Skip rendering resize handles on canvas - they are now rendered as HTML overlays
+        // This prevents z-index issues where handles appear behind widgets
 
         vertices
     }
@@ -1597,41 +1685,7 @@ impl WhiteboardCore {
 
 
 
-    fn tessellate_resize_handle(&self, vertices: &mut Vec<Vertex>, handle: ResizeHandleInfo) {
-        let x = handle.position.x as f32;
-        let y = handle.position.y as f32;
-        let half_size = (handle.size / 2.0) as f32;
-        let border_width = 1.0;
 
-        // First render black border (slightly larger)
-        let border_color = [0.0, 0.0, 0.0, 1.0]; // Black border
-        let border_half_size = half_size + border_width;
-
-        vertices.extend_from_slice(&[
-            // Border - Triangle 1
-            Vertex { position: [x - border_half_size, y - border_half_size], color: border_color, uv: [0.0, 0.0], shape_type: 0.0 },
-            Vertex { position: [x + border_half_size, y - border_half_size], color: border_color, uv: [1.0, 0.0], shape_type: 0.0 },
-            Vertex { position: [x - border_half_size, y + border_half_size], color: border_color, uv: [0.0, 1.0], shape_type: 0.0 },
-            // Border - Triangle 2
-            Vertex { position: [x + border_half_size, y - border_half_size], color: border_color, uv: [1.0, 0.0], shape_type: 0.0 },
-            Vertex { position: [x + border_half_size, y + border_half_size], color: border_color, uv: [1.0, 1.0], shape_type: 0.0 },
-            Vertex { position: [x - border_half_size, y + border_half_size], color: border_color, uv: [0.0, 1.0], shape_type: 0.0 },
-        ]);
-
-        // Then render white handle on top
-        let handle_color = [1.0, 1.0, 1.0, 1.0]; // White
-
-        vertices.extend_from_slice(&[
-            // Handle - Triangle 1
-            Vertex { position: [x - half_size, y - half_size], color: handle_color, uv: [0.0, 0.0], shape_type: 0.0 },
-            Vertex { position: [x + half_size, y - half_size], color: handle_color, uv: [1.0, 0.0], shape_type: 0.0 },
-            Vertex { position: [x - half_size, y + half_size], color: handle_color, uv: [0.0, 1.0], shape_type: 0.0 },
-            // Handle - Triangle 2
-            Vertex { position: [x + half_size, y - half_size], color: handle_color, uv: [1.0, 0.0], shape_type: 0.0 },
-            Vertex { position: [x + half_size, y + half_size], color: handle_color, uv: [1.0, 1.0], shape_type: 0.0 },
-            Vertex { position: [x - half_size, y + half_size], color: handle_color, uv: [0.0, 1.0], shape_type: 0.0 },
-        ]);
-    }
 
     fn tessellate_selection_outline(&self, vertices: &mut Vec<Vertex>, shape: &Shape) {
         let outline_color = [0.5, 0.7, 1.0, 0.9]; // Subtle blue outline

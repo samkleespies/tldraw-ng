@@ -115,10 +115,7 @@ body {
   50% { opacity: 1; }
 }
 
-@keyframes widgetGlow {
-  0%, 100% { box-shadow: 0 2px 8px rgba(88, 101, 242, 0.4); }
-  50% { box-shadow: 0 2px 16px rgba(88, 101, 242, 0.8); }
-}
+
 
 /* Tool buttons - dark tldraw style */
 .tool-btn {
@@ -145,8 +142,6 @@ body {
 .tool-btn.active {
   background: #5865f2;
   color: white;
-  box-shadow: 0 2px 8px rgba(88, 101, 242, 0.4);
-  animation: widgetGlow 2s ease-in-out infinite;
 }
 
 .tool-btn:disabled {

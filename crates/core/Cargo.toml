@@ -2,6 +2,9 @@
 name = "core"
 version = "0.1.0"
 edition = "2021"
+description = "High-performance whiteboard core built with Rust + WebGPU"
+repository = "https://github.com/your-username/tldraw-ng"
+license = "MIT"
 
 [lib]
 crate-type = ["cdylib"]

@@ -14,5 +14,8 @@ export default defineConfig({
   },
   worker: {
     format: 'es'
+  },
+  optimizeDeps: {
+    entries: ['src/index.ts']
   }
 });

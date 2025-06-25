@@ -17,6 +17,13 @@ export interface WidgetOverlay {
   zIndex: number;
 }
 
+export interface ResizeHandle {
+  type: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'top' | 'bottom' | 'left' | 'right';
+  x: number;
+  y: number;
+  size: number;
+}
+
 // Separate interface for widget instances with stable references
 interface WidgetInstance {
   id: number;
@@ -39,6 +46,9 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
   const [isInitialized, setIsInitialized] = createSignal(false);
   const [frameRate, setFrameRate] = createSignal(0);
   const [overlayCount, setOverlayCount] = createSignal(0);
+
+  // Resize handles state
+  const [resizeHandles, setResizeHandles] = createSignal<ResizeHandle[]>([]);
 
 
 
@@ -68,6 +78,7 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
 
       if (isInitialized()) {
         syncOverlaysWithCanvas();
+        updateResizeHandles();
 
         // Calculate frame rate every second
         frameCount++;
@@ -136,7 +147,7 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
             setOverlayStore(widget.id, newOverlay);
             createWidgetInstance(widget.id, widget.type);
           } else {
-            // Update existing overlay (positions, active state) without recreation
+            // Always update overlay bounds to ensure size changes are reflected
             setOverlayStore(widget.id, newOverlay);
           }
         }
@@ -171,23 +182,115 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
   };
 
   /**
-   * Handle widget click to prevent canvas interaction
+   * Handle widget click to select widget for resize handles
    */
   const handleWidgetClick = (e: MouseEvent, overlay: WidgetOverlay) => {
     e.stopPropagation();
 
-    // Clear any shape selection but don't add widgets to selection
-    // Widgets should never show selection outlines
+    // Select this widget for resize handles (but no visual selection outline)
     const core = (window as any).whiteboardCore;
-    if (core) {
-      if (typeof core.clear_selection === 'function') {
-        core.clear_selection();
+    if (core && overlay.id) {
+      if (typeof core.select_widget === 'function') {
+        core.select_widget(overlay.id);
       }
-      // Don't add widgets to selection - they should have no visual selection outline
       if (typeof core.render_frame === 'function') {
         core.render_frame();
       }
     }
+  };
+
+  /**
+   * Update resize handles from core
+   */
+  const updateResizeHandles = () => {
+    const core = (window as any).whiteboardCore;
+    if (!core || !props.canvasRef) return;
+
+    try {
+      // Get resize handles from core (we need to add this function to the Rust core)
+      if (typeof core.get_resize_handles_for_overlay === 'function') {
+        const handles = core.get_resize_handles_for_overlay();
+        const canvasBounds = props.canvasRef.getBoundingClientRect();
+
+        // Convert world coordinates to screen coordinates
+        const transformer = getCoordinateTransformer();
+        const convertedHandles: ResizeHandle[] = handles.map((handle: any) => ({
+          type: handle.type,
+          x: handle.x - canvasBounds.left,
+          y: handle.y - canvasBounds.top,
+          size: handle.size
+        }));
+
+        setResizeHandles(convertedHandles);
+      } else {
+        setResizeHandles([]);
+      }
+    } catch (e) {
+      console.error('Error updating resize handles:', e);
+      setResizeHandles([]);
+    }
+  };
+
+  /**
+   * Handle resize handle mouse down
+   */
+  const handleResizeHandleMouseDown = (e: MouseEvent, handle: ResizeHandle) => {
+    e.stopPropagation();
+    e.preventDefault();
+
+    const core = (window as any).whiteboardCore;
+    if (!core || !props.canvasRef) return;
+
+    // Get canvas bounds for coordinate conversion
+    const canvasBounds = props.canvasRef.getBoundingClientRect();
+
+    // Convert to canvas coordinates
+    const canvasX = e.clientX - canvasBounds.left;
+    const canvasY = e.clientY - canvasBounds.top;
+
+    // Start resize operation in core
+    core.handle_pointer_down(canvasX, canvasY, false);
+
+    // Set up global mouse capture for resize operations (similar to App.tsx)
+    if (core.is_resizing && core.is_resizing()) {
+      setupResizeMouseCapture(canvasX, canvasY);
+    }
+
+    core.render_frame();
+  };
+
+  /**
+   * Set up global mouse capture for resize operations
+   */
+  const setupResizeMouseCapture = (startX: number, startY: number) => {
+    const core = (window as any).whiteboardCore;
+    if (!core || !props.canvasRef) return;
+
+    const canvasBounds = props.canvasRef.getBoundingClientRect();
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const moveX = moveEvent.clientX - canvasBounds.left;
+      const moveY = moveEvent.clientY - canvasBounds.top;
+
+      core.handle_pointer_move(moveX, moveY);
+      core.render_frame();
+    };
+
+    const handleMouseUp = (upEvent: MouseEvent) => {
+      const upX = upEvent.clientX - canvasBounds.left;
+      const upY = upEvent.clientY - canvasBounds.top;
+
+      core.handle_pointer_up(upX, upY);
+      core.render_frame();
+
+      // Remove global event listeners
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    // Add global event listeners
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
   };
 
   /**
@@ -505,7 +608,7 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
       ref={containerRef}
       style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 50;"
     >
-      <Index each={overlayIds()} fallback={<div>No widgets</div>}>
+      <Index each={overlayIds()}>
         {(overlayId) => {
           const id = overlayId();
           const overlay = () => overlayStore[id];
@@ -527,6 +630,29 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
           );
         }}
       </Index>
+
+      {/* Resize handles - rendered on top of widgets */}
+      <For each={resizeHandles()}>
+        {(handle) => (
+          <div
+            style={`
+              position: absolute;
+              left: ${handle.x - handle.size / 2}px;
+              top: ${handle.y - handle.size / 2}px;
+              width: ${handle.size}px;
+              height: ${handle.size}px;
+              background: white;
+              border: 1px solid black;
+              cursor: ${handle.type}-resize;
+              z-index: 1000;
+              pointer-events: auto;
+              box-sizing: border-box;
+            `}
+            data-resize-handle={handle.type}
+            onMouseDown={(e) => handleResizeHandleMouseDown(e, handle)}
+          />
+        )}
+      </For>
     </div>
   );
 };

@@ -2,6 +2,8 @@ import { Component, createSignal, onMount, onCleanup } from 'solid-js';
 import { initializeCoordinateTransformer, getCoordinateTransformer } from './utils/coordinates';
 import OverlayContainer from './components/OverlayContainer';
 import { WidgetLinkingProvider } from './context/WidgetLinkingContext';
+// Import Monaco configuration early to prevent worker issues
+import './utils/monaco-config';
 
 // Message types for worker communication
 type MsgFromUI =

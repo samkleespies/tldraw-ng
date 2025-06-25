@@ -128,10 +128,18 @@ export const TerminalWidget: Component<TerminalWidgetProps> = (props) => {
 
   // React to size changes
   createEffect(() => {
+    // Watch for width/height prop changes
+    props.width;
+    props.height;
+
     if (terminal && fitAddon && isLoaded()) {
       setTimeout(() => {
         fitAddon?.fit();
-      }, 100);
+        // Force a second fit to ensure proper sizing
+        setTimeout(() => {
+          fitAddon?.fit();
+        }, 10);
+      }, 10);
     }
   });
 
