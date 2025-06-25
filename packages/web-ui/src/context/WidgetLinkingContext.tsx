@@ -6,11 +6,25 @@ interface FileSystemEntry {
   language?: string;
 }
 
+interface FileModification {
+  type: 'create' | 'update' | 'delete';
+  path: string;
+  content?: string;
+  reason?: string;
+}
+
 interface WidgetLinkingContextType {
   // File operations
   openFileInEditor: (filePath: string) => void;
   getFileContent: (filePath: string) => string;
   setFileContent: (filePath: string, content: string) => void;
+
+  // Enhanced file operations for AI
+  getAllFiles: () => Record<string, string>;
+  createFile: (filePath: string, content: string) => void;
+  deleteFile: (filePath: string) => void;
+  applyFileModifications: (modifications: FileModification[]) => void;
+  getProjectStructure: () => string[];
 
   // Widget communication
   currentFile: () => string;
@@ -21,6 +35,9 @@ interface WidgetLinkingContextType {
 
   // Widget dragging
   handleTitleBarDrag?: (e: MouseEvent, widgetId: number) => void;
+
+  // AI integration
+  notifyAIModification?: (modification: FileModification) => void;
 }
 
 const WidgetLinkingContext = createContext<WidgetLinkingContextType>();
@@ -262,17 +279,86 @@ export function WidgetLinkingProvider(props: {
   const openFileInEditor = (filePath: string) => {
     console.log('Opening file in editor:', filePath);
     setCurrentFile(filePath);
-    
+
     // Broadcast file open event
     window.dispatchEvent(new CustomEvent('open-file-in-editor', {
       detail: { filePath, content: getFileContent(filePath) }
     }));
   };
 
+  // Enhanced file operations for AI
+  const getAllFiles = (): Record<string, string> => {
+    return fileSystem();
+  };
+
+  const createFile = (filePath: string, content: string) => {
+    console.log('Creating file:', filePath);
+    setFileContent(filePath, content);
+
+    // Broadcast file creation event
+    window.dispatchEvent(new CustomEvent('file-created', {
+      detail: { filePath, content }
+    }));
+  };
+
+  const deleteFile = (filePath: string) => {
+    console.log('Deleting file:', filePath);
+    setFileSystem(prev => {
+      const newFileSystem = { ...prev };
+      delete newFileSystem[filePath];
+      return newFileSystem;
+    });
+
+    // If we're deleting the current file, switch to another file
+    if (currentFile() === filePath) {
+      const remainingFiles = Object.keys(fileSystem()).filter(f => f !== filePath);
+      if (remainingFiles.length > 0) {
+        setCurrentFile(remainingFiles[0]);
+      }
+    }
+
+    // Broadcast file deletion event
+    window.dispatchEvent(new CustomEvent('file-deleted', {
+      detail: { filePath }
+    }));
+  };
+
+  const applyFileModifications = (modifications: FileModification[]) => {
+    console.log('Applying file modifications:', modifications);
+
+    modifications.forEach(mod => {
+      switch (mod.type) {
+        case 'create':
+        case 'update':
+          if (mod.content !== undefined) {
+            setFileContent(mod.path, mod.content);
+          }
+          break;
+        case 'delete':
+          deleteFile(mod.path);
+          break;
+      }
+    });
+
+    // Broadcast bulk modification event
+    window.dispatchEvent(new CustomEvent('files-modified', {
+      detail: { modifications }
+    }));
+  };
+
+  const getProjectStructure = (): string[] => {
+    return Object.keys(fileSystem()).sort();
+  };
+
   const contextValue: WidgetLinkingContextType = {
     openFileInEditor,
     getFileContent,
     setFileContent,
+    getAllFiles,
+    createFile,
+    deleteFile,
+    applyFileModifications,
+    getProjectStructure,
     currentFile,
     setCurrentFile,
     fileSystem,

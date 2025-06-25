@@ -1,5 +1,14 @@
 import { Component, createSignal, onMount, For } from 'solid-js';
 import { useWidgetLinking } from '../../context/WidgetLinkingContext';
+import {
+  sendChatMessage,
+  isOpenAIConfigured,
+  getOpenAIConfig,
+  parseAIActions,
+  cleanResponseText,
+  type ChatContext,
+  type AIAction
+} from '../../utils/openai-client';
 
 export interface ChatMessage {
   id: string;
@@ -7,6 +16,8 @@ export interface ChatMessage {
   content: string;
   timestamp: Date;
   shapeReferences?: number[];
+  actions?: AIAction[];
+  cleanContent?: string;
 }
 
 export interface ChatWidgetProps {
@@ -26,30 +37,44 @@ export const ChatWidget: Component<ChatWidgetProps> = (props) => {
   const [inputValue, setInputValue] = createSignal('');
   const [isLoading, setIsLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [conversationHistory, setConversationHistory] = createSignal<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
+  const [autoApplyActions, setAutoApplyActions] = createSignal(false);
 
-  const { handleTitleBarDrag } = useWidgetLinking();
+  const widgetLinking = useWidgetLinking();
+  const { handleTitleBarDrag } = widgetLinking;
   
   let inputRef: HTMLTextAreaElement | undefined;
   let messagesRef: HTMLDivElement | undefined;
 
   onMount(() => {
     console.log(`💬 Initializing Chat Widget ${props.id}`);
-    
+
+    // Check OpenAI configuration
+    const config = getOpenAIConfig();
+    console.log('OpenAI config:', config);
+
     // Add welcome message
     const welcomeMessage: ChatMessage = {
       id: 'welcome',
       role: 'assistant',
-      content: `Hello! I'm your AI assistant for the spatial IDE. I can help you with:
+      content: isOpenAIConfigured()
+        ? `Hello! I'm your AI assistant for the spatial IDE. I can help you with:
 
 • Code analysis and suggestions
 • Shape references using @shapeId syntax
 • Project structure and architecture
 • Debugging and troubleshooting
+• **Direct code modifications** with action buttons
 
-Try asking me about your code or reference shapes on the canvas!`,
+💡 **Tip**: Toggle the "Auto" button in the title bar to automatically apply my code changes, or leave it off to review changes before applying them manually.
+
+Try asking me about your code or reference shapes on the canvas!`
+        : `⚠️ OpenAI API not configured. Please set your VITE_OPENAI_API_KEY in the .env file to enable AI responses.
+
+For now, I can only provide basic help messages. Get your API key from: https://platform.openai.com/api-keys`,
       timestamp: new Date()
     };
-    
+
     setMessages([welcomeMessage]);
   });
 
@@ -73,20 +98,69 @@ Try asking me about your code or reference shapes on the canvas!`,
     setIsLoading(true);
     setError(null);
 
+    // Add user message to conversation history
+    setConversationHistory(prev => [...prev, { role: 'user', content }]);
+
     try {
-      // Simulate AI response (in real implementation, this would call OpenAI API)
-      const aiResponse = await simulateAIResponse(content, userMessage.shapeReferences);
-      
+      let aiResponse: string;
+
+      if (!isOpenAIConfigured()) {
+        // Fallback response when OpenAI is not configured
+        aiResponse = `I'd love to help, but I need an OpenAI API key to provide intelligent responses. Please set VITE_OPENAI_API_KEY in your .env file.
+
+For now, here are some things you can try:
+• Create Monaco Editor widgets for code editing
+• Use Terminal widgets for command-line operations
+• Add Preview widgets to see your work live
+• Reference shapes using @shape[ID] syntax
+
+Get your API key from: https://platform.openai.com/api-keys`;
+      } else {
+        // Build context for the AI
+        const context: ChatContext = {
+          shapeReferences: userMessage.shapeReferences,
+          allFiles: getAllWorkspaceFiles(),
+          projectStructure: getProjectStructure(),
+          canvasInfo: getCanvasInfo()
+        };
+
+        // Call real OpenAI API
+        aiResponse = await sendChatMessage(content, context, conversationHistory());
+      }
+
+      // Parse AI actions from the response
+      const actions = parseAIActions(aiResponse);
+      const cleanContent = cleanResponseText(aiResponse);
+
       const assistantMessage: ChatMessage = {
         id: `assistant_${Date.now()}`,
         role: 'assistant',
         content: aiResponse,
+        cleanContent: cleanContent,
+        actions: actions,
         timestamp: new Date()
       };
 
       setMessages(prev => [...prev, assistantMessage]);
+
+      // Add assistant response to conversation history
+      setConversationHistory(prev => [...prev, { role: 'assistant', content: aiResponse }]);
+
+      // Auto-apply actions if enabled
+      if (autoApplyActions() && actions.length > 0) {
+        console.log('🤖 Auto-applying AI actions:', actions);
+        for (const action of actions) {
+          try {
+            await executeAction(action);
+          } catch (e) {
+            console.error('Failed to auto-apply action:', action, e);
+            // Continue with other actions even if one fails
+          }
+        }
+      }
+
       props.onMessage?.(assistantMessage);
-      
+
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to get AI response';
       setError(errorMsg);
@@ -103,7 +177,7 @@ Try asking me about your code or reference shapes on the canvas!`,
   const extractShapeReferences = (content: string): number[] => {
     const matches = content.match(/@shape(\d+)/g);
     if (!matches) return [];
-    
+
     return matches.map(match => {
       const id = match.replace('@shape', '');
       return parseInt(id, 10);
@@ -111,104 +185,125 @@ Try asking me about your code or reference shapes on the canvas!`,
   };
 
   /**
-   * Simulate AI response (replace with actual OpenAI integration)
+   * Get all workspace files for complete context
    */
-  const simulateAIResponse = async (userMessage: string, shapeRefs?: number[]): Promise<string> => {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
+  const getAllWorkspaceFiles = (): Record<string, string> => {
+    try {
+      return widgetLinking.getAllFiles();
+    } catch (e) {
+      console.log('Could not get all workspace files:', e);
+      return {};
+    }
+  };
 
-    // Get canvas context if shape references exist
-    let contextInfo = '';
-    if (shapeRefs && shapeRefs.length > 0) {
+  /**
+   * Get project structure
+   */
+  const getProjectStructure = (): string[] => {
+    try {
+      return widgetLinking.getProjectStructure();
+    } catch (e) {
+      console.log('Could not get project structure:', e);
+      return [];
+    }
+  };
+
+  /**
+   * Execute AI action
+   */
+  const executeAction = async (action: AIAction) => {
+    try {
+      switch (action.type) {
+        case 'modify_files':
+          widgetLinking.applyFileModifications(action.data);
+          console.log('✅ Applied file modifications:', action.data);
+          break;
+
+        case 'create_file':
+          widgetLinking.createFile(action.data.path, action.data.content);
+          console.log('✅ Created file:', action.data.path);
+          break;
+
+        case 'delete_file':
+          widgetLinking.deleteFile(action.data.path);
+          console.log('✅ Deleted file:', action.data.path);
+          break;
+
+        case 'open_file':
+          widgetLinking.openFileInEditor(action.data.path);
+          console.log('✅ Opened file:', action.data.path);
+          break;
+
+        default:
+          console.warn('Unknown action type:', action.type);
+      }
+    } catch (e) {
+      console.error('Failed to execute action:', action, e);
+      setError(`Failed to execute action: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    }
+  };
+
+  /**
+   * Get language from file path
+   */
+  const getLanguageFromPath = (filePath: string): string => {
+    const ext = filePath.split('.').pop()?.toLowerCase();
+    switch (ext) {
+      case 'tsx':
+      case 'ts': return 'typescript';
+      case 'jsx':
+      case 'js': return 'javascript';
+      case 'html': return 'html';
+      case 'css': return 'css';
+      case 'json': return 'json';
+      case 'md': return 'markdown';
+      default: return 'text';
+    }
+  };
+
+  /**
+   * Get canvas information for context
+   */
+  const getCanvasInfo = () => {
+    try {
       const core = (window as any).whiteboardCore;
       if (core) {
-        contextInfo = `\n\n📍 **Referenced Shapes:**\n`;
-        for (const shapeId of shapeRefs) {
-          const widgetInfo = core.get_widget_info(shapeId);
-          if (widgetInfo) {
-            try {
-              const info = JSON.parse(widgetInfo);
-              contextInfo += `• Shape ${shapeId}: ${info.type} widget\n`;
-            } catch (e) {
-              contextInfo += `• Shape ${shapeId}: Unknown widget\n`;
-            }
-          } else {
-            contextInfo += `• Shape ${shapeId}: Basic shape\n`;
+        // Use the correct API methods from the Rust core
+        const totalShapes = core.shape_count ? core.shape_count() : 0;
+        const selectedCount = core.selected_count ? core.selected_count() : 0;
+
+        // Get active widgets info
+        let widgetInfo = '';
+        try {
+          const activeWidgets = core.get_active_widgets ? core.get_active_widgets() : '[]';
+          const widgets = JSON.parse(activeWidgets);
+          if (widgets.length > 0) {
+            widgetInfo = `, ${widgets.length} active widgets`;
           }
+        } catch (e) {
+          // Ignore widget parsing errors
         }
+
+        return {
+          totalShapes,
+          selectedShapes: [], // We don't have individual IDs, just count
+          selectedCount,
+          viewportInfo: `Canvas with ${totalShapes} shapes, ${selectedCount} selected${widgetInfo}`
+        };
       }
+    } catch (e) {
+      console.log('Could not get canvas info:', e);
     }
 
-    // Generate contextual responses
-    const lowerMessage = userMessage.toLowerCase();
-    
-    if (lowerMessage.includes('help') || lowerMessage.includes('what can you do')) {
-      return `I can help you with various aspects of your spatial IDE project:
-
-🔧 **Code Analysis**: Review your Monaco editor content for improvements
-🎯 **Shape References**: Use @shape[ID] to reference specific widgets or shapes
-🏗️ **Architecture**: Discuss project structure and best practices
-🐛 **Debugging**: Help troubleshoot issues in your code
-📊 **Performance**: Suggest optimizations for your application
-
-What would you like to work on?${contextInfo}`;
-    }
-    
-    if (lowerMessage.includes('monaco') || lowerMessage.includes('editor')) {
-      return `The Monaco Editor widgets provide a full VS Code experience with:
-
-• Syntax highlighting and IntelliSense
-• Multi-language support (TypeScript, JavaScript, HTML, CSS, etc.)
-• Code folding and minimap
-• Find/replace functionality
-• Keyboard shortcuts
-
-You can create multiple Monaco editors for different files and they'll sync with the preview widgets automatically.${contextInfo}`;
-    }
-    
-    if (lowerMessage.includes('terminal')) {
-      return `The Terminal widgets offer a full command-line experience:
-
-• Built-in commands (help, clear, ls, pwd, etc.)
-• Package manager simulation (npm, pnpm)
-• WebContainer integration for running real Node.js code
-• Multiple terminal sessions
-
-Try typing 'help' in a terminal to see available commands!${contextInfo}`;
-    }
-    
-    if (lowerMessage.includes('preview')) {
-      return `Preview widgets show live updates of your work:
-
-• **File Preview**: For HTML, Markdown, and other files
-• **Server Preview**: For running applications (localhost)
-• **Auto-refresh**: Updates when you edit files in Monaco
-• **Responsive**: Adapts to different screen sizes
-
-The preview automatically syncs with your Monaco editor changes!${contextInfo}`;
-    }
-    
-    if (shapeRefs && shapeRefs.length > 0) {
-      return `I can see you're referencing ${shapeRefs.length} shape(s) on the canvas. This is a powerful feature that lets me understand the context of your spatial IDE layout.
-
-You can reference any shape using @shape[ID] syntax. This helps me provide more targeted assistance based on your specific setup.
-
-What would you like to know about these shapes?${contextInfo}`;
-    }
-    
-    // Default responses
-    const responses = [
-      `That's an interesting question! In the context of spatial IDE development, I'd suggest focusing on the relationship between your widgets and how they can work together effectively.${contextInfo}`,
-      
-      `Great point! The spatial IDE approach allows for much more flexible development workflows. You can arrange your tools exactly how you need them for each project.${contextInfo}`,
-      
-      `I can help you with that! The combination of Monaco editors, terminals, and preview widgets creates a powerful development environment. What specific aspect would you like to explore?${contextInfo}`,
-      
-      `Excellent question! The WebGPU + Rust foundation provides incredible performance benefits while still supporting rich HTML widgets for complex tools like Monaco Editor.${contextInfo}`
-    ];
-    
-    return responses[Math.floor(Math.random() * responses.length)];
+    return {
+      totalShapes: 0,
+      selectedShapes: [],
+      selectedCount: 0,
+      viewportInfo: 'Canvas information not available'
+    };
   };
+
+
 
   /**
    * Handle key press in input
@@ -264,7 +359,38 @@ What would you like to know about these shapes?${contextInfo}`;
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
         </svg>
         <span style="font-weight: 600;">AI Assistant</span>
-        <span style="font-size: 12px; opacity: 0.7; margin-left: auto;">#{props.conversationId}</span>
+
+        {/* Auto-apply toggle */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setAutoApplyActions(!autoApplyActions());
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          style={`
+            background: ${autoApplyActions() ? '#0e639c' : 'transparent'};
+            color: ${autoApplyActions() ? 'white' : '#cccccc'};
+            border: 1px solid ${autoApplyActions() ? '#0e639c' : '#3e3e42'};
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 11px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-left: auto;
+            margin-right: 8px;
+            hover:background-color: ${autoApplyActions() ? '#1a7bc4' : '#3e3e42'};
+          `}
+          title={autoApplyActions() ? 'Auto-apply enabled: AI changes will be applied automatically' : 'Auto-apply disabled: Click action buttons to apply changes'}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 6L9 17l-5-5"/>
+          </svg>
+          Auto
+        </button>
+
+        <span style="font-size: 12px; opacity: 0.7;">#{props.conversationId}</span>
       </div>
 
       {/* Messages */}
@@ -274,17 +400,46 @@ What would you like to know about these shapes?${contextInfo}`;
       >
         <For each={messages()}>
           {(message) => (
-            <div style={`display: flex; ${message.role === 'user' ? 'justify-content: flex-end;' : 'justify-content: flex-start;'}`}>
+            <div style={`display: flex; flex-direction: column; ${message.role === 'user' ? 'align-items: flex-end;' : 'align-items: flex-start;'}`}>
               <div style={`max-width: 80%; padding: 12px 16px; border-radius: 12px; ${
                 message.role === 'user'
                   ? 'background: #0e639c; color: white;'
                   : 'background: #2d2d30; border: 1px solid #3e3e42; color: #cccccc;'
               }`}>
-                <div style="white-space: pre-wrap; line-height: 1.5;" innerHTML={formatMessageContent(message.content)} />
+                <div style="white-space: pre-wrap; line-height: 1.5;" innerHTML={formatMessageContent(message.cleanContent || message.content)} />
                 <div style={`font-size: 11px; margin-top: 8px; opacity: 0.7; ${message.role === 'user' ? 'text-align: right;' : ''}`}>
                   {message.timestamp.toLocaleTimeString()}
                 </div>
               </div>
+
+              {/* AI Actions */}
+              {message.actions && message.actions.length > 0 && (
+                <div style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
+                  {autoApplyActions() && (
+                    <span style="font-size: 11px; color: #4ade80; display: flex; align-items: center; gap: 4px;">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M20 6L9 17l-5-5"/>
+                      </svg>
+                      Auto-applied
+                    </span>
+                  )}
+
+                  {!autoApplyActions() && (
+                    <For each={message.actions}>
+                      {(action) => (
+                        <button
+                          onClick={() => executeAction(action)}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          style="background: #0e639c; color: white; border: none; border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; hover:background-color: #1a7bc4;"
+                          title={`Execute: ${action.description}`}
+                        >
+                          🔧 {action.description}
+                        </button>
+                      )}
+                    </For>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </For>

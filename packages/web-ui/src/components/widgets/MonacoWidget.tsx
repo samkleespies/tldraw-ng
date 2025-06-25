@@ -32,16 +32,19 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
   const [currentFilePath, setCurrentFilePath] = createSignal(props.filePath);
   const [devServerUrl, setDevServerUrl] = createSignal('');
   const [runStatus, setRunStatus] = createSignal<'idle' | 'booting' | 'installing' | 'running' | 'ready' | 'error'>('idle');
+  const [isUserTyping, setIsUserTyping] = createSignal(false);
 
   const { getFileContent, setFileContent, currentFile, handleTitleBarDrag, fileSystem } = useWidgetLinking();
 
   // WebContainer instance
   let webcontainerInstance: WebContainer | null = null;
 
-  // Listen for file updates and sync to WebContainer
+  // Listen for file updates and sync to WebContainer + Monaco Editor
   onMount(() => {
     const handleFileUpdate = async (event: CustomEvent) => {
       const { filePath, content } = event.detail;
+
+      // Update WebContainer if ready
       if (webcontainerInstance && runStatus() === 'ready') {
         try {
           // Remove leading slash and write to WebContainer
@@ -51,12 +54,60 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
           console.error('Error updating WebContainer file:', error);
         }
       }
+
+      // Update Monaco Editor if this is the current file and user isn't actively typing
+      if (filePath === currentFilePath() && editor && !isUserTyping()) {
+        try {
+          const currentContent = editor.getValue();
+          // Only update if content is different to avoid cursor jumping
+          if (currentContent !== content) {
+            const position = editor.getPosition();
+            editor.setValue(content);
+            // Restore cursor position if possible
+            if (position) {
+              editor.setPosition(position);
+            }
+          }
+        } catch (error) {
+          console.error('Error updating Monaco editor content:', error);
+        }
+      }
+    };
+
+    // Listen for bulk file modifications (from AI actions)
+    const handleFilesModified = async (event: CustomEvent) => {
+      const { modifications } = event.detail;
+
+      // Check if any modification affects the current file
+      const currentPath = currentFilePath();
+      const relevantMod = modifications.find((mod: any) => mod.path === currentPath);
+
+      if (relevantMod && editor && !isUserTyping()) {
+        try {
+          const currentContent = editor.getValue();
+          const newContent = relevantMod.content || '';
+
+          // Only update if content is different
+          if (currentContent !== newContent) {
+            const position = editor.getPosition();
+            editor.setValue(newContent);
+            // Restore cursor position if possible
+            if (position) {
+              editor.setPosition(position);
+            }
+          }
+        } catch (error) {
+          console.error('Error updating Monaco editor from bulk modification:', error);
+        }
+      }
     };
 
     window.addEventListener('file-updated', handleFileUpdate as EventListener);
+    window.addEventListener('files-modified', handleFilesModified as EventListener);
 
     onCleanup(() => {
       window.removeEventListener('file-updated', handleFileUpdate as EventListener);
+      window.removeEventListener('files-modified', handleFilesModified as EventListener);
     });
   });
 
@@ -101,8 +152,23 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
 
         // Auto-apply changes when editor content changes with error handling
         try {
+          let typingTimer: number | null = null;
+
           editor.onDidChangeModelContent(() => {
             try {
+              // Mark user as typing
+              setIsUserTyping(true);
+
+              // Clear existing timer
+              if (typingTimer) {
+                clearTimeout(typingTimer);
+              }
+
+              // Set timer to mark typing as stopped after 1 second of inactivity
+              typingTimer = window.setTimeout(() => {
+                setIsUserTyping(false);
+              }, 1000);
+
               const content = editor?.getValue?.() || '';
               const filePath = currentFilePath();
               if (filePath) {
