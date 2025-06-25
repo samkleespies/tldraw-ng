@@ -5,9 +5,12 @@
   "private": true,
   "scripts": {
     "dev": "pnpm run build:wasm && pnpm -r --parallel dev",
+    "dev:watch": "pnpm run build:wasm && concurrently \"pnpm run watch:wasm\" \"pnpm -r --parallel dev\"",
     "build": "pnpm run build:wasm && pnpm -r build",
     "build:wasm": "cd crates/core && wasm-pack build --target web --out-dir pkg && cd ../.. && pnpm run copy:wasm",
-    "copy:wasm": "copy \"crates\\core\\pkg\\*\" \"packages\\web-ui\\src\\wasm\\\"",
+    "copy:wasm": "node scripts/copy-wasm.js",
+    "watch:wasm": "node scripts/watch-wasm.js",
+    "check:wasm": "node scripts/check-wasm.js",
     "lint": "pnpm -r lint",
     "format": "pnpm -r format",
     "test": "pnpm run test:rust && pnpm run test:e2e",
@@ -23,6 +26,7 @@
   "devDependencies": {
     "@playwright/test": "^1.40.0",
     "@types/node": "^20.0.0",
+    "concurrently": "^9.2.0",
     "typescript": "^5.0.0"
   },
   "workspaces": [

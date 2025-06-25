@@ -8,6 +8,9 @@ This document contains all the essential commands for building, running, and mai
 # Start development server (builds WASM + starts dev servers)
 pnpm dev
 
+# Start development with WASM auto-watching (recommended for Rust development)
+pnpm run dev:watch
+
 # Start dev server on specific port if needed
 pnpm dev --port 3000
 ```
@@ -23,6 +26,12 @@ pnpm run build:wasm
 
 # Manually copy WASM files to web-ui (if needed)
 pnpm run copy:wasm
+
+# Check if WASM files are in sync
+pnpm run check:wasm
+
+# Watch WASM files and auto-copy on changes
+pnpm run watch:wasm
 
 # Build specific package
 pnpm -r build                    # All packages
