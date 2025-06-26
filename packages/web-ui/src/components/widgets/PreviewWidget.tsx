@@ -1,5 +1,6 @@
 import { Component, createSignal, onMount, createEffect, onCleanup } from 'solid-js';
 import { useWidgetLinking } from '../../context/WidgetLinkingContext';
+import { consoleBroadcaster } from '../../utils/console-broadcaster';
 
 export interface PreviewWidgetProps {
   id: number;
@@ -29,6 +30,7 @@ export const PreviewWidget: Component<PreviewWidgetProps> = (props) => {
 
   onMount(() => {
     console.log('Preview widget mounted, mode:', mode(), 'props:', props);
+    consoleBroadcaster.info(`Preview Widget ${props.id} initialized`, 'preview-widget', 'system');
 
     // Listen for file updates
     const handleFileUpdate = (event: CustomEvent) => {
@@ -47,8 +49,29 @@ export const PreviewWidget: Component<PreviewWidgetProps> = (props) => {
       setDevServerUrl(url);
     };
 
+    // Listen for console messages from iframe
+    const handleConsoleMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'console-message') {
+        const { level, message, source, category } = event.data;
+
+        // Clean up any potential encoding issues in iframe messages
+        const cleanMessage = typeof message === 'string'
+          ? message
+              .replace(/\x1b\[[0-9;]*m/g, '') // Remove ANSI color codes
+              .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '') // Remove other ANSI sequences
+              .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // Remove control characters
+              .trim()
+          : String(message);
+
+        if (cleanMessage) {
+          consoleBroadcaster.log(level, cleanMessage, source, category);
+        }
+      }
+    };
+
     window.addEventListener('file-updated', handleFileUpdate as EventListener);
     window.addEventListener('dev-server-ready', handleDevServerReady as EventListener);
+    window.addEventListener('message', handleConsoleMessage);
 
     // Initial load
     const currentFilePath = currentFile();
@@ -65,6 +88,7 @@ export const PreviewWidget: Component<PreviewWidgetProps> = (props) => {
     onCleanup(() => {
       window.removeEventListener('file-updated', handleFileUpdate as EventListener);
       window.removeEventListener('dev-server-ready', handleDevServerReady as EventListener);
+      window.removeEventListener('message', handleConsoleMessage);
     });
   });
 
@@ -155,8 +179,61 @@ root.render(React.createElement(App));`;
 <body>
     <div id="root"></div>
     <script type="text/javascript">
+        // Console interception - send messages to parent window
+        (function() {
+            const originalConsole = {
+                log: console.log,
+                info: console.info,
+                warn: console.warn,
+                error: console.error,
+                debug: console.debug
+            };
+
+            function interceptConsole(level) {
+                console[level] = function(...args) {
+                    // Call original console method
+                    originalConsole[level].apply(console, args);
+
+                    // Send to parent window for console widget
+                    try {
+                        const message = args.map(arg =>
+                            typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+                        ).join(' ');
+
+                        window.parent.postMessage({
+                            type: 'console-message',
+                            level: level,
+                            message: message,
+                            source: 'preview-runtime',
+                            category: 'runtime',
+                            timestamp: new Date().toISOString()
+                        }, '*');
+                    } catch (e) {
+                        // Ignore errors in message posting
+                    }
+                };
+            }
+
+            // Intercept all console methods
+            ['log', 'info', 'warn', 'error', 'debug'].forEach(interceptConsole);
+        })();
+
         // Error handling
         window.onerror = function(msg, url, line, col, error) {
+            // Send error to console system
+            try {
+                window.parent.postMessage({
+                    type: 'console-message',
+                    level: 'error',
+                    message: 'Runtime Error: ' + msg + (error && error.stack ? '\\n\\n' + error.stack : ''),
+                    source: 'preview-runtime',
+                    category: 'runtime',
+                    timestamp: new Date().toISOString()
+                }, '*');
+            } catch (e) {
+                // Ignore errors in message posting
+            }
+
             document.getElementById('root').innerHTML =
                 '<div class="error">Runtime Error: ' + msg +
                 (error && error.stack ? '\\n\\n' + error.stack : '') + '</div>';
@@ -164,8 +241,26 @@ root.render(React.createElement(App));`;
         };
 
         try {
+            // Test console integration
+            console.log('🚀 Preview runtime initialized');
+            console.info('Preview iframe ready for React components');
+
             ${transformedCode}
         } catch (error) {
+            // Send execution error to console system
+            try {
+                window.parent.postMessage({
+                    type: 'console-message',
+                    level: 'error',
+                    message: 'Execution Error: ' + error.message + (error.stack ? '\\n\\n' + error.stack : ''),
+                    source: 'preview-runtime',
+                    category: 'runtime',
+                    timestamp: new Date().toISOString()
+                }, '*');
+            } catch (e) {
+                // Ignore errors in message posting
+            }
+
             document.getElementById('root').innerHTML =
                 '<div class="error">Execution Error: ' + error.message +
                 (error.stack ? '\\n\\n' + error.stack : '') + '</div>';

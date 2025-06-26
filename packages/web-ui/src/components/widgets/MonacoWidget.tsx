@@ -2,6 +2,7 @@ import { Component, createSignal, onMount, onCleanup, createEffect } from 'solid
 import { useWidgetLinking } from '../../context/WidgetLinkingContext';
 import { WebContainer } from '@webcontainer/api';
 import { configureMonacoLanguages, getWorkerFreeEditorOptions } from '../../utils/monaco-config';
+import { consoleBroadcaster } from '../../utils/console-broadcaster';
 
 // Dynamic import to avoid build issues
 const loadMonaco = async () => {
@@ -229,6 +230,10 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
     };
 
     initializeEditor();
+
+    // Log Monaco widget initialization
+    consoleBroadcaster.info(`Monaco Widget ${props.id} initialized`, 'monaco-widget', 'system');
+    consoleBroadcaster.log('log', 'Monaco editor ready for development', 'monaco-widget', 'system');
   });
 
   onCleanup(() => {
@@ -343,31 +348,72 @@ export default defineConfig({
 
     try {
       setRunStatus('booting');
+      consoleBroadcaster.info('Booting WebContainer...', 'monaco-widget', 'webcontainer');
 
       // Boot WebContainer
       const wc = await WebContainer.boot();
       webcontainerInstance = wc;
+      consoleBroadcaster.info('WebContainer booted successfully', 'monaco-widget', 'webcontainer');
 
       // Mount file system
       const filesToMount = createDefaultFiles();
       await wc.mount(filesToMount);
+      consoleBroadcaster.info('File system mounted', 'monaco-widget', 'webcontainer');
 
       setRunStatus('installing');
+      consoleBroadcaster.info('Installing dependencies...', 'monaco-widget', 'build');
 
-      // Install dependencies
+      // Install dependencies with output capture
       const installProcess = await wc.spawn('npm', ['install']);
+
+      // Capture install process output
+      try {
+        installProcess.output.pipeTo(new WritableStream({
+          write(data) {
+            try {
+              let text: string;
+              if (typeof data === 'string') {
+                text = data;
+              } else if (data instanceof Uint8Array) {
+                text = new TextDecoder().decode(data);
+              } else {
+                text = String(data);
+              }
+
+              // Clean up ANSI escape codes and other terminal formatting
+              const cleanText = text
+                .replace(/\x1b\[[0-9;]*m/g, '') // Remove ANSI color codes
+                .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '') // Remove other ANSI sequences
+                .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // Remove control characters
+                .trim();
+
+              if (cleanText) {
+                consoleBroadcaster.log('log', cleanText, 'npm-install', 'build');
+              }
+            } catch (error) {
+              console.warn('Error processing install output:', error);
+            }
+          }
+        }));
+      } catch (error) {
+        consoleBroadcaster.warn('Could not capture npm install output', 'monaco-widget', 'build');
+        console.warn('Install output capture failed:', error);
+      }
+
       const installExitCode = await installProcess.exit;
 
       if (installExitCode !== 0) {
+        consoleBroadcaster.error(`npm install failed with exit code ${installExitCode}`, 'monaco-widget', 'build');
         setRunStatus('error');
         return;
       }
 
+      consoleBroadcaster.info('Dependencies installed successfully', 'monaco-widget', 'build');
       setRunStatus('running');
 
       // Set up server-ready listener
       wc.on('server-ready', (port, url) => {
-        console.log('Dev server ready:', url);
+        consoleBroadcaster.info(`Dev server ready at ${url}`, 'monaco-widget', 'webcontainer');
         setDevServerUrl(url);
         setRunStatus('ready');
 
@@ -377,11 +423,55 @@ export default defineConfig({
         }));
       });
 
-      // Start dev server
-      await wc.spawn('npm', ['run', 'dev']);
+      consoleBroadcaster.info('Starting dev server...', 'monaco-widget', 'build');
+
+      // Start dev server with output capture
+      const devProcess = await wc.spawn('npm', ['run', 'dev']);
+
+      // Capture dev server output
+      try {
+        devProcess.output.pipeTo(new WritableStream({
+          write(data) {
+            try {
+              let text: string;
+              if (typeof data === 'string') {
+                text = data;
+              } else if (data instanceof Uint8Array) {
+                text = new TextDecoder().decode(data);
+              } else {
+                text = String(data);
+              }
+
+              // Clean up ANSI escape codes and other terminal formatting
+              const cleanText = text
+                .replace(/\x1b\[[0-9;]*m/g, '') // Remove ANSI color codes
+                .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '') // Remove other ANSI sequences
+                .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // Remove control characters
+                .trim();
+
+              if (cleanText) {
+                // Filter out verbose dev server logs, keep important ones
+                if (cleanText.includes('error') || cleanText.includes('Error') ||
+                    cleanText.includes('warn') || cleanText.includes('Warning') ||
+                    cleanText.includes('ready') || cleanText.includes('compiled')) {
+                  const level = cleanText.toLowerCase().includes('error') ? 'error' :
+                               cleanText.toLowerCase().includes('warn') ? 'warn' : 'info';
+                  consoleBroadcaster.log(level, cleanText, 'dev-server', 'build');
+                }
+              }
+            } catch (error) {
+              console.warn('Error processing dev server output:', error);
+            }
+          }
+        }));
+      } catch (error) {
+        consoleBroadcaster.warn('Could not capture dev server output', 'monaco-widget', 'build');
+        console.warn('Dev server output capture failed:', error);
+      }
 
     } catch (error) {
-      console.error('Error running project:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      consoleBroadcaster.error(`Error running project: ${errorMessage}`, 'monaco-widget', 'webcontainer');
       setRunStatus('error');
     }
   };
