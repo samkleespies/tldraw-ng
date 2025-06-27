@@ -11,12 +11,19 @@ struct Uniforms {
 @group(0) @binding(0)
 var<uniform> uniforms: Uniforms;
 
+// Texture and sampler for image rendering
+@group(0) @binding(1)
+var image_texture: texture_2d<f32>;
+
+@group(0) @binding(2)
+var image_sampler: sampler;
+
 // Vertex input structure
 struct VertexInput {
     @location(0) position: vec2<f32>,
     @location(1) color: vec4<f32>,
     @location(2) uv: vec2<f32>,
-    @location(3) shape_type: f32, // 0=rect, 1=ellipse, 2=line
+    @location(3) shape_type: f32, // 0=rect, 1=ellipse, 2=line, 3=image
 }
 
 // Vertex output structure
@@ -50,9 +57,12 @@ fn vs_main(vertex: VertexInput) -> VertexOutput {
 // Fragment shader with shape-specific rendering
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // Always sample the texture first (this ensures uniform control flow)
+    let texture_color = textureSample(image_texture, image_sampler, in.uv);
+
     var final_color = in.color;
 
-    // Shape-specific rendering
+    // Shape-specific rendering using select() for uniform control flow
     if (in.shape_type < 0.5) {
         // Rectangle (shape_type = 0.0)
         final_color = in.color;
@@ -64,6 +74,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             discard;
         }
         final_color = in.color;
+    } else if (in.shape_type < 2.5) {
+        // Line (shape_type = 2.0)
+        final_color = in.color;
+    } else {
+        // Image (shape_type = 3.0 and above)
+        // Use the sampled texture color with base color tinting
+        final_color = vec4<f32>(
+            texture_color.rgb * in.color.rgb,
+            texture_color.a * in.color.a
+        );
     }
 
     return final_color;

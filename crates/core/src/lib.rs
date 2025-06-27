@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
+use base64;
 
 mod gpu;
 mod utils;
@@ -47,6 +48,7 @@ impl Point {
 pub enum ShapeType {
     Rectangle { width: f64, height: f64 },
     Ellipse { width: f64, height: f64 },
+    Image { width: f64, height: f64, data_url: String, original_width: f64, original_height: f64 },
     Widget { widget_type: WidgetType, width: f64, height: f64, active: bool },
 }
 
@@ -197,6 +199,14 @@ fn apply_resize(shape: &mut Shape, resize_data: ResizeData) {
                 *height = new_height;
             }
         }
+        ShapeType::Image { width, height, .. } => {
+            if let Some(new_width) = resize_data.new_width {
+                *width = new_width;
+            }
+            if let Some(new_height) = resize_data.new_height {
+                *height = new_height;
+            }
+        }
         ShapeType::Widget { width, height, .. } => {
             if let Some(new_width) = resize_data.new_width {
                 *width = new_width;
@@ -228,6 +238,9 @@ impl Shape {
                 BoundingBox::new(x, y, x + width, y + height)
             }
             ShapeType::Ellipse { width, height } => {
+                BoundingBox::new(x, y, x + width, y + height)
+            }
+            ShapeType::Image { width, height, .. } => {
                 BoundingBox::new(x, y, x + width, y + height)
             }
             ShapeType::Widget { width, height, .. } => {
@@ -374,6 +387,175 @@ impl WhiteboardCore {
 
         self.shapes.insert(id, shape);
         id.0
+    }
+
+    /// Create a new image shape
+    #[wasm_bindgen]
+    pub fn create_image(&mut self, x: f64, y: f64, width: f64, height: f64, data_url: &str, original_width: f64, original_height: f64) -> u32 {
+        // Save state before operation
+        self.save_state();
+
+        // Process the image data and create texture
+        if let Err(e) = self.process_image_data(data_url, original_width as u32, original_height as u32) {
+            web_sys::console::error_1(&format!("Failed to process image data: {}", e).into());
+        }
+
+        let id = ShapeId(self.next_id);
+        self.next_id += 1;
+
+        let shape = Shape {
+            id,
+            position: Point { x, y },
+            shape_type: ShapeType::Image {
+                width,
+                height,
+                data_url: data_url.to_string(),
+                original_width,
+                original_height
+            },
+            color: [1.0, 1.0, 1.0, 1.0], // White (not used for images)
+        };
+
+        self.shapes.insert(id, shape);
+        id.0
+    }
+
+    /// Create a new image shape with RGBA data directly
+    #[wasm_bindgen]
+    pub fn create_image_with_rgba(&mut self, x: f64, y: f64, width: f64, height: f64, data_url: &str, original_width: f64, original_height: f64, rgba_data: &[u8]) -> u32 {
+        // Save state before operation
+        self.save_state();
+
+        // Process the RGBA data and create texture
+        if let Err(e) = self.process_rgba_data(data_url, rgba_data, original_width as u32, original_height as u32) {
+            web_sys::console::error_1(&format!("Failed to process RGBA data: {}", e).into());
+        }
+
+        let id = ShapeId(self.next_id);
+        self.next_id += 1;
+
+        let shape = Shape {
+            id,
+            position: Point { x, y },
+            shape_type: ShapeType::Image {
+                width,
+                height,
+                data_url: data_url.to_string(),
+                original_width,
+                original_height
+            },
+            color: [1.0, 1.0, 1.0, 1.0], // White (not used for images)
+        };
+
+        self.shapes.insert(id, shape);
+        id.0
+    }
+
+    /// Process image data URL and create GPU texture
+    fn process_image_data(&mut self, data_url: &str, width: u32, height: u32) -> Result<(), String> {
+        // Parse data URL format: data:image/png;base64,<base64_data>
+        if !data_url.starts_with("data:image/") {
+            return Err("Invalid data URL format".to_string());
+        }
+
+        let parts: Vec<&str> = data_url.split(',').collect();
+        if parts.len() != 2 {
+            return Err("Invalid data URL structure".to_string());
+        }
+
+        let base64_data = parts[1];
+
+        // Decode base64 data
+        let image_bytes = base64::decode(base64_data)
+            .map_err(|e| format!("Failed to decode base64: {}", e))?;
+
+        // For now, we'll assume the image is already in RGBA format
+        // In a production system, you'd want to use an image decoding library
+        // But for this demo, we'll create a simple conversion
+        let rgba_data = self.convert_to_rgba(&image_bytes, width, height)?;
+
+        // Create texture in GPU
+        if let Some(gpu) = &mut self.gpu {
+            gpu.create_texture_from_data(data_url, &rgba_data, width, height)
+                .map_err(|e| format!("Failed to create GPU texture: {}", e))?;
+        }
+
+        Ok(())
+    }
+
+    /// Process RGBA data directly and create GPU texture
+    fn process_rgba_data(&mut self, data_url: &str, rgba_data: &[u8], width: u32, height: u32) -> Result<(), String> {
+        // Validate RGBA data size
+        let expected_size = (width * height * 4) as usize;
+        if rgba_data.len() != expected_size {
+            return Err(format!("RGBA data size mismatch: expected {}, got {}", expected_size, rgba_data.len()));
+        }
+
+        // Create texture in GPU
+        if let Some(gpu) = &mut self.gpu {
+            gpu.create_texture_from_data(data_url, rgba_data, width, height)
+                .map_err(|e| format!("Failed to create GPU texture: {}", e))?;
+        }
+
+        Ok(())
+    }
+
+    /// Convert image bytes to RGBA format (simplified for demo)
+    fn convert_to_rgba(&self, _image_bytes: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
+        // For this demo, we'll create a simple pattern
+        // In production, you'd use an image decoding library like `image` crate
+        let mut rgba_data = Vec::with_capacity((width * height * 4) as usize);
+
+        for y in 0..height {
+            for x in 0..width {
+                // Create a simple gradient pattern for demo
+                let r = ((x as f32 / width as f32) * 255.0) as u8;
+                let g = ((y as f32 / height as f32) * 255.0) as u8;
+                let b = 128;
+                let a = 255;
+
+                rgba_data.push(r);
+                rgba_data.push(g);
+                rgba_data.push(b);
+                rgba_data.push(a);
+            }
+        }
+
+        Ok(rgba_data)
+    }
+
+    /// Get all image shapes as JSON for AI context
+    #[wasm_bindgen]
+    pub fn get_image_shapes(&self) -> String {
+        let mut images = Vec::new();
+
+        for shape in self.shapes.values() {
+            if let ShapeType::Image { width, height, data_url, original_width, original_height } = &shape.shape_type {
+                let image_info = serde_json::json!({
+                    "id": shape.id.0,
+                    "position": {
+                        "x": shape.position.x,
+                        "y": shape.position.y
+                    },
+                    "width": width,
+                    "height": height,
+                    "original_width": original_width,
+                    "original_height": original_height,
+                    "data_url": data_url
+                });
+                images.push(image_info);
+            }
+        }
+
+        serde_json::to_string(&images).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// Get count of image shapes
+    #[wasm_bindgen]
+    pub fn image_count(&self) -> u32 {
+        self.shapes.values()
+            .filter(|shape| matches!(shape.shape_type, ShapeType::Image { .. }))
+            .count() as u32
     }
 
 
@@ -788,6 +970,18 @@ impl WhiteboardCore {
                 shape_type: ShapeType::Ellipse { width: 1.0, height: 1.0 },
                 color: [1.0, 1.0, 1.0, 1.0], // White
             },
+            "image" => Shape {
+                id,
+                position: Point { x: world_x, y: world_y },
+                shape_type: ShapeType::Image {
+                    width: 100.0,
+                    height: 100.0,
+                    data_url: "".to_string(), // Will be set later
+                    original_width: 100.0,
+                    original_height: 100.0
+                },
+                color: [1.0, 1.0, 1.0, 1.0], // White (not used for images)
+            },
             "monaco" => Shape {
                 id,
                 position: Point { x: world_x, y: world_y },
@@ -905,6 +1099,10 @@ impl WhiteboardCore {
                         *h = height;
                     }
                     ShapeType::Ellipse { width: w, height: h } => {
+                        *w = width;
+                        *h = height;
+                    }
+                    ShapeType::Image { width: w, height: h, .. } => {
                         *w = width;
                         *h = height;
                     }
@@ -1186,7 +1384,7 @@ impl WhiteboardCore {
         };
 
         match &shape.shape_type {
-            ShapeType::Rectangle { .. } | ShapeType::Ellipse { .. } | ShapeType::Widget { .. } => {
+            ShapeType::Rectangle { .. } | ShapeType::Ellipse { .. } | ShapeType::Image { .. } | ShapeType::Widget { .. } => {
                 match handle_type {
                     ResizeHandle::TopLeft => {
                         let new_width = start_bounds.max_x - mouse_x;
@@ -1609,6 +1807,10 @@ impl WhiteboardCore {
                 ShapeType::Ellipse { width, height } => {
                     self.tessellate_ellipse_outline(&mut vertices, shape.position, *width, *height, shape.color, 2.0);
                 }
+                ShapeType::Image { width, height, .. } => {
+                    // Render images as textured quads
+                    self.tessellate_image_quad(&mut vertices, shape.position, *width, *height);
+                }
                 ShapeType::Widget { .. } => {
                     // Don't render any outline for widgets - show raw widget form only
                     // Widgets are rendered by the overlay system, not the canvas
@@ -1698,6 +1900,9 @@ impl WhiteboardCore {
             ShapeType::Ellipse { width, height } => {
                 self.tessellate_ellipse_outline(&mut *vertices, shape.position, *width, *height, outline_color, outline_width);
             }
+            ShapeType::Image { width, height, .. } => {
+                self.tessellate_rectangle_outline(&mut *vertices, shape.position, *width, *height, outline_color, outline_width);
+            }
             ShapeType::Widget { .. } => {
                 // Don't render selection outline for widgets - keep them completely clean
             }
@@ -1774,6 +1979,56 @@ impl WhiteboardCore {
 
 
 
+    fn tessellate_image_quad(&self, vertices: &mut Vec<Vertex>, pos: Point, width: f64, height: f64) {
+        let x = pos.x as f32;
+        let y = pos.y as f32;
+        let w = width as f32;
+        let h = height as f32;
+
+        let color = [1.0, 1.0, 1.0, 1.0]; // White color for images (texture will provide the color)
+        let shape_type = 3.0; // Image shape type
+
+        // Create two triangles to form a quad
+        // Triangle 1: top-left, bottom-left, top-right
+        vertices.push(Vertex {
+            position: [x, y],
+            color,
+            uv: [0.0, 0.0], // Top-left UV
+            shape_type,
+        });
+        vertices.push(Vertex {
+            position: [x, y + h],
+            color,
+            uv: [0.0, 1.0], // Bottom-left UV
+            shape_type,
+        });
+        vertices.push(Vertex {
+            position: [x + w, y],
+            color,
+            uv: [1.0, 0.0], // Top-right UV
+            shape_type,
+        });
+
+        // Triangle 2: top-right, bottom-left, bottom-right
+        vertices.push(Vertex {
+            position: [x + w, y],
+            color,
+            uv: [1.0, 0.0], // Top-right UV
+            shape_type,
+        });
+        vertices.push(Vertex {
+            position: [x, y + h],
+            color,
+            uv: [0.0, 1.0], // Bottom-left UV
+            shape_type,
+        });
+        vertices.push(Vertex {
+            position: [x + w, y + h],
+            color,
+            uv: [1.0, 1.0], // Bottom-right UV
+            shape_type,
+        });
+    }
     fn tessellate_selection_rectangle(&self, vertices: &mut Vec<Vertex>, start: Point, end: Point) {
         let min_x = start.x.min(end.x) as f32;
         let max_x = start.x.max(end.x) as f32;

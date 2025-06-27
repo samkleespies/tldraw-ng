@@ -1,6 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 use wasm_bindgen::prelude::*;
 use wgpu::util::DeviceExt;
+use std::collections::HashMap;
 
 // ---------------- Vertex / Uniform types -----------------------------
 
@@ -62,6 +63,39 @@ struct Uniforms {
 }
 
 #[derive(Debug)]
+pub struct TextureCache {
+    textures: HashMap<String, wgpu::Texture>,
+    texture_views: HashMap<String, wgpu::TextureView>,
+    bind_groups: HashMap<String, wgpu::BindGroup>,
+}
+
+impl TextureCache {
+    pub fn new() -> Self {
+        Self {
+            textures: HashMap::new(),
+            texture_views: HashMap::new(),
+            bind_groups: HashMap::new(),
+        }
+    }
+
+    pub fn get_bind_group(&self, data_url: &str) -> Option<&wgpu::BindGroup> {
+        self.bind_groups.get(data_url)
+    }
+
+    pub fn insert_texture(&mut self, data_url: String, texture: wgpu::Texture, texture_view: wgpu::TextureView, bind_group: wgpu::BindGroup) {
+        self.textures.insert(data_url.clone(), texture);
+        self.texture_views.insert(data_url.clone(), texture_view);
+        self.bind_groups.insert(data_url, bind_group);
+    }
+
+    pub fn clear(&mut self) {
+        self.textures.clear();
+        self.texture_views.clear();
+        self.bind_groups.clear();
+    }
+}
+
+#[derive(Debug)]
 pub struct GpuState {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -71,8 +105,13 @@ pub struct GpuState {
     size: (u32, u32),
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
+    bind_group_layout: wgpu::BindGroupLayout,
     _uniform_buffer: wgpu::Buffer,
     uniforms: Uniforms,
+    texture_cache: TextureCache,
+    sampler: wgpu::Sampler,
+    default_texture: wgpu::Texture,
+    default_texture_view: wgpu::TextureView,
 }
 
 impl GpuState {
@@ -137,6 +176,57 @@ impl GpuState {
 
         surface.configure(&device, &config);
 
+        // ---- Create sampler for texture sampling ----
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("image-sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        // ---- Create default 1x1 white texture for non-image shapes ----
+        let default_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("default-texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        // Upload white pixel data to default texture
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &default_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &[255, 255, 255, 255], // White pixel
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let default_texture_view = default_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
         // ---- Uniform buffer / bind group ----
         let uniforms = Uniforms {
             view_proj: [
@@ -157,25 +247,56 @@ impl GpuState {
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("bind-group-layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                // Uniform buffer (binding 0)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                // Texture (binding 1)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                // Sampler (binding 2)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bind-group"),
+            label: Some("default-bind-group"),
             layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&default_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
         });
 
         // ---- Shader & pipeline ----
@@ -224,8 +345,13 @@ impl GpuState {
             size: (width, height),
             pipeline,
             bind_group,
+            bind_group_layout,
             _uniform_buffer: uniform_buffer,
             uniforms,
+            texture_cache: TextureCache::new(),
+            sampler,
+            default_texture,
+            default_texture_view,
         })
     }
 
@@ -245,6 +371,10 @@ impl GpuState {
     }
 
     pub fn render_shapes(&mut self, vertices: &[Vertex], clear: bool) {
+        self.render_shapes_with_textures(vertices, &[], clear);
+    }
+
+    pub fn render_shapes_with_textures(&mut self, vertices: &[Vertex], _texture_data_urls: &[Option<String>], clear: bool) {
         // Handle empty vertex arrays gracefully
         if vertices.is_empty() && !clear {
             // Nothing to render and no clearing needed
@@ -305,8 +435,25 @@ impl GpuState {
             // Only draw if we have vertices
             if let Some(vertex_buffer) = vertex_buffer {
                 rpass.set_pipeline(&self.pipeline);
-                rpass.set_bind_group(0, &self.bind_group, &[]);
                 rpass.set_vertex_buffer(0, vertex_buffer.slice(..));
+
+                // Check if we have any image shapes (shape_type = 3.0)
+                let has_images = vertices.iter().any(|v| v.shape_type >= 2.5);
+
+                if has_images {
+                    // For now, use the first available bind group in cache for image shapes
+                    // In a more sophisticated implementation, we'd batch by texture
+                    let bind_group = if let Some((_, bind_group)) = self.texture_cache.bind_groups.iter().next() {
+                        bind_group
+                    } else {
+                        &self.bind_group // Fallback to default
+                    };
+                    rpass.set_bind_group(0, bind_group, &[]);
+                } else {
+                    // Use default bind group for non-image shapes
+                    rpass.set_bind_group(0, &self.bind_group, &[]);
+                }
+
                 let vert_count = vertices.len() as u32;
                 rpass.draw(0..vert_count, 0..1);
             }
@@ -321,5 +468,93 @@ impl GpuState {
         // Write only the changed part (or entire struct for simplicity)
         self.queue
             .write_buffer(&self._uniform_buffer, 0, bytemuck::bytes_of(&self.uniforms));
+    }
+
+    /// Create a texture from image data and cache it
+    pub fn create_texture_from_data(&mut self, data_url: &str, image_data: &[u8], width: u32, height: u32) -> Result<(), String> {
+        // Check if texture already exists in cache
+        if self.texture_cache.get_bind_group(data_url).is_some() {
+            return Ok(());
+        }
+
+        // Create texture
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("image-texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        // Upload image data
+        self.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            image_data,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        // Create texture view
+        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Create bind group for this texture
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("image-bind-group"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self._uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+
+        // Cache the texture and bind group
+        self.texture_cache.insert_texture(data_url.to_string(), texture, texture_view, bind_group);
+
+        Ok(())
+    }
+
+    /// Get bind group for a specific texture (or default if not found)
+    pub fn get_bind_group_for_texture(&self, data_url: Option<&str>) -> &wgpu::BindGroup {
+        if let Some(data_url) = data_url {
+            if let Some(bind_group) = self.texture_cache.get_bind_group(data_url) {
+                return bind_group;
+            }
+        }
+        &self.bind_group // Default bind group with white texture
+    }
+
+    /// Clear texture cache (useful for memory management)
+    pub fn clear_texture_cache(&mut self) {
+        self.texture_cache.clear();
     }
 }

@@ -61,6 +61,15 @@ export interface ChatContext {
     selectedShapes: number[];
     viewportInfo: string;
   };
+  imageShapes?: {
+    id: number;
+    position: { x: number; y: number };
+    width: number;
+    height: number;
+    original_width: number;
+    original_height: number;
+    data_url: string;
+  }[];
 }
 
 /**
@@ -92,6 +101,7 @@ You can help users with:
 - Spatial IDE workflow optimization
 - Shape and widget management
 - DIRECT CODE MODIFICATIONS
+- Image analysis and screenshot interpretation
 
 IMPORTANT: You can directly modify files in the workspace! When suggesting code changes, you can:
 1. Provide the complete updated file content
@@ -152,6 +162,13 @@ Be helpful, concise, and focus on practical advice for development workflows.`;
       if (context.canvasInfo) {
         systemPrompt += `\n\nCanvas state: ${context.canvasInfo.totalShapes} total shapes, ${context.canvasInfo.selectedShapes.length} selected`;
       }
+
+      if (context.imageShapes && context.imageShapes.length > 0) {
+        systemPrompt += `\n\nImages on canvas: ${context.imageShapes.length} image(s)`;
+        context.imageShapes.forEach((image, index) => {
+          systemPrompt += `\n- Image ${image.id}: ${image.width}x${image.height} at (${image.position.x.toFixed(1)}, ${image.position.y.toFixed(1)})`;
+        });
+      }
     }
 
     // Build messages array
@@ -166,12 +183,34 @@ Be helpful, concise, and focus on practical advice for development workflows.`;
       content: msg.content
     })));
 
-    // Add current user message
-    messages.push({ role: 'user', content: userMessage });
+    // Add current user message with potential images
+    const hasImages = context?.imageShapes && context.imageShapes.length > 0;
 
-    // Make API call
+    if (hasImages) {
+      // Use vision-capable model and message format
+      const userContent: any[] = [
+        { type: 'text', text: userMessage }
+      ];
+
+      // Add images to the message
+      context!.imageShapes!.forEach(image => {
+        userContent.push({
+          type: 'image_url',
+          image_url: {
+            url: image.data_url,
+            detail: 'low' // Use 'low' for faster processing, 'high' for more detail
+          }
+        });
+      });
+
+      messages.push({ role: 'user', content: userContent });
+    } else {
+      messages.push({ role: 'user', content: userMessage });
+    }
+
+    // Make API call with appropriate model
     const completion = await client.chat.completions.create({
-      model: MODEL,
+      model: hasImages ? 'gpt-4o' : MODEL, // Use vision model if images present
       messages,
       max_tokens: 1000,
       temperature: 0.7,

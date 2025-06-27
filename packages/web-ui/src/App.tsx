@@ -55,10 +55,99 @@ const App: Component = () => {
 
   onMount(() => {
     initializeWorker();
-    
+
     // Add global event listeners
+    console.log('🔧 Adding event listeners...');
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('mouseup', handleGlobalMouseUp);
+    window.addEventListener('paste', handlePaste);
+    console.log('✅ Paste event listener added to window');
+
+    // Also add paste listener to document as backup
+    document.addEventListener('paste', handlePaste);
+    console.log('✅ Paste event listener added to document');
+
+    // Add focus debugging
+    window.addEventListener('focus', () => console.log('🎯 Window focused'));
+    document.addEventListener('focus', () => console.log('📄 Document focused'));
+
+    // Add test for any key events
+    const testKeyHandler = async (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === 'v') {
+        console.log('🧪 Ctrl+V detected via keydown listener');
+
+        // Try to read clipboard directly
+        try {
+          const clipboardItems = await navigator.clipboard.read();
+          console.log('📋 Clipboard items from navigator.clipboard.read():', clipboardItems);
+
+          for (const item of clipboardItems) {
+            console.log('📄 Clipboard item types:', item.types);
+            for (const type of item.types) {
+              if (type.startsWith('image/')) {
+                console.log('🖼️ Found image type:', type);
+                const blob = await item.getType(type);
+                console.log('📦 Image blob:', blob);
+
+                // Convert blob to data URL
+                const dataUrl = await new Promise<string>((resolve) => {
+                  const reader = new FileReader();
+                  reader.onload = () => resolve(reader.result as string);
+                  reader.readAsDataURL(blob);
+                });
+
+                console.log('🔗 Data URL created from clipboard, length:', dataUrl.length);
+
+                // Get image dimensions and decode to RGBA
+                const img = new Image();
+                img.onload = () => {
+                  console.log('📏 Image dimensions:', img.width, 'x', img.height);
+
+                  // Calculate display size
+                  const maxSize = 400;
+                  const scale = Math.min(maxSize / img.width, maxSize / img.height, 1);
+                  const displayWidth = img.width * scale;
+                  const displayHeight = img.height * scale;
+
+                  // Get canvas center
+                  const canvasBounds = canvasRef!.getBoundingClientRect();
+                  const centerX = canvasBounds.width / 2;
+                  const centerY = canvasBounds.height / 2;
+
+                  // Decode image to RGBA data
+                  const canvas = document.createElement('canvas');
+                  canvas.width = img.width;
+                  canvas.height = img.height;
+                  const ctx = canvas.getContext('2d')!;
+                  ctx.drawImage(img, 0, 0);
+                  const imageData = ctx.getImageData(0, 0, img.width, img.height);
+                  const rgbaData = imageData.data;
+
+                  console.log('🎨 Decoded RGBA data, length:', rgbaData.length);
+
+                  // Create image with decoded data
+                  createImageAtPositionWithRGBA(centerX, centerY, displayWidth, displayHeight, dataUrl, img.width, img.height, rgbaData);
+                };
+                img.src = dataUrl;
+
+                return; // Exit after processing first image
+              }
+            }
+          }
+
+          console.log('ℹ️ No images found in clipboard');
+        } catch (error) {
+          console.log('❌ Error reading clipboard:', error);
+        }
+      }
+    };
+    window.addEventListener('keydown', testKeyHandler);
+
+    // Test paste event specifically
+    const testPasteHandler = (e: ClipboardEvent) => {
+      console.log('🧪 TEST: Paste event detected!', e);
+    };
+    window.addEventListener('paste', testPasteHandler);
   });
 
   onCleanup(() => {
@@ -66,8 +155,11 @@ const App: Component = () => {
     // if (worker) {
     //   worker.terminate();
     // }
+    console.log('🧹 Removing event listeners...');
     window.removeEventListener('keydown', handleKeyDown);
     window.removeEventListener('mouseup', handleGlobalMouseUp);
+    window.removeEventListener('paste', handlePaste);
+    document.removeEventListener('paste', handlePaste);
   });
 
   const initializeWorker = async () => {
@@ -131,6 +223,13 @@ const App: Component = () => {
 
       // Store core instance globally for event handlers
       (window as any).whiteboardCore = core;
+
+      // Check if create_image function is available
+      if (typeof core.create_image === 'function') {
+        console.log('✅ create_image function is available');
+      } else {
+        console.log('❌ create_image function is NOT available');
+      }
 
       // Initialize coordinate transformer
       initializeCoordinateTransformer(core);
@@ -447,6 +546,98 @@ const App: Component = () => {
     }
   };
 
+  const createImageAtPosition = (x: number, y: number, width: number, height: number, dataUrl: string, originalWidth: number, originalHeight: number) => {
+    console.log('🎨 createImageAtPosition called with:', { x, y, width, height, originalWidth, originalHeight });
+
+    const core = (window as any).whiteboardCore;
+    if (!core) {
+      console.log('❌ No core instance available');
+      return;
+    }
+
+    console.log('✅ Core instance found');
+
+    // Convert screen coordinates to world coordinates
+    const camera_scale = core.get_camera_scale();
+    const camera_translation = core.get_camera_translation();
+    console.log('📷 Camera state:', { scale: camera_scale, translation: camera_translation });
+
+    const world_x = (x / camera_scale) + camera_translation[0];
+    const world_y = (y / camera_scale) + camera_translation[1];
+    console.log('🌍 World coordinates:', { world_x, world_y });
+
+    // Calculate position so image center is at cursor position (in world coordinates)
+    const centerX = world_x - width / 2;
+    const centerY = world_y - height / 2;
+    console.log('🎯 Final position:', { centerX, centerY });
+
+    // Create image shape
+    console.log('🔧 Calling core.create_image...');
+    const imageId = core.create_image(centerX, centerY, width, height, dataUrl, originalWidth, originalHeight);
+    console.log('🆔 Image ID returned:', imageId);
+
+    const newCount = core.shape_count();
+    console.log('📊 New shape count:', newCount);
+    setShapeCount(newCount);
+
+    // Render the frame to make the image visible immediately
+    console.log('🎬 Rendering frame...');
+    core.render_frame();
+
+    console.log(`✅ Created image shape ${imageId} at (${centerX.toFixed(2)}, ${centerY.toFixed(2)}) with size ${width}x${height}`);
+  };
+
+  const createImageAtPositionWithRGBA = (x: number, y: number, width: number, height: number, dataUrl: string, originalWidth: number, originalHeight: number, rgbaData: Uint8ClampedArray) => {
+    console.log('🎨 createImageAtPositionWithRGBA called with:', {
+      x, y, width, height, originalWidth, originalHeight,
+      dataUrlLength: dataUrl.length,
+      rgbaDataLength: rgbaData.length
+    });
+
+    const core = (window as any).whiteboardCore;
+    if (!core) {
+      console.error('❌ Core instance not found');
+      return;
+    }
+    console.log('✅ Core instance found');
+
+    // Check if create_image_with_rgba function exists
+    if (typeof core.create_image_with_rgba === 'function') {
+      console.log('🔧 Using create_image_with_rgba...');
+
+      // Convert screen coordinates to world coordinates
+      const camera_scale = core.get_camera_scale();
+      const camera_translation = core.get_camera_translation();
+      console.log('📷 Camera state:', { scale: camera_scale, translation: camera_translation });
+
+      const world_x = (x / camera_scale) + camera_translation[0];
+      const world_y = (y / camera_scale) + camera_translation[1];
+      console.log('🌍 World coordinates:', { world_x, world_y });
+
+      // Calculate position so image center is at cursor position (in world coordinates)
+      const centerX = world_x - width / 2;
+      const centerY = world_y - height / 2;
+      console.log('🎯 Final position:', { centerX, centerY });
+
+      // Create the image shape with RGBA data
+      const imageId = core.create_image_with_rgba(centerX, centerY, width, height, dataUrl, originalWidth, originalHeight, rgbaData);
+      console.log('🆔 Image ID returned:', imageId);
+
+      const newCount = core.shape_count();
+      console.log('📊 New shape count:', newCount);
+      setShapeCount(newCount);
+
+      // Render the frame to make the image visible immediately
+      console.log('🎬 Rendering frame...');
+      core.render_frame();
+
+      console.log(`✅ Created image shape ${imageId} at (${centerX.toFixed(2)}, ${centerY.toFixed(2)}) with size ${width}x${height}`);
+    } else {
+      console.log('⚠️ create_image_with_rgba not available, falling back to regular create_image');
+      createImageAtPosition(x, y, width, height, dataUrl, originalWidth, originalHeight);
+    }
+  };
+
   const handleCoreCommand = (command: string) => {
     const core = (window as any).whiteboardCore;
     if (!core) return;
@@ -596,6 +787,114 @@ const App: Component = () => {
     }
   };
 
+  // Helper function to convert File to data URL
+  const fileToDataUrl = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Helper function to get image dimensions
+  const getImageDimensions = (dataUrl: string): Promise<{ width: number; height: number }> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve({ width: img.width, height: img.height });
+      img.onerror = reject;
+      img.src = dataUrl;
+    });
+  };
+
+  const handlePaste = async (e: ClipboardEvent) => {
+    console.log('🔍 Paste event triggered');
+
+    if (!isInitialized()) {
+      console.log('❌ Canvas not initialized yet');
+      return;
+    }
+
+    // Check if the focus is inside a Monaco editor or other input element
+    const activeElement = document.activeElement;
+    const isInEditor = activeElement && (
+      activeElement.classList.contains('monaco-editor') ||
+      activeElement.closest('.monaco-editor') ||
+      activeElement.tagName === 'INPUT' ||
+      activeElement.tagName === 'TEXTAREA' ||
+      (activeElement as HTMLElement).contentEditable === 'true'
+    );
+
+    console.log('🎯 Active element:', activeElement?.tagName, 'isInEditor:', isInEditor);
+
+    // If we're in an editor, let the default paste behavior happen
+    if (isInEditor) {
+      console.log('📝 In editor, allowing default paste behavior');
+      return;
+    }
+
+    // Prevent default paste behavior for canvas
+    e.preventDefault();
+    console.log('🚫 Prevented default paste behavior');
+
+    const clipboardData = e.clipboardData;
+    if (!clipboardData) {
+      console.log('❌ No clipboard data available');
+      return;
+    }
+
+    // Look for image data in clipboard
+    const items = Array.from(clipboardData.items);
+    console.log('📋 Clipboard items:', items.map(item => ({ type: item.type, kind: item.kind })));
+
+    const imageItem = items.find(item => item.type.startsWith('image/'));
+    console.log('🖼️ Found image item:', imageItem?.type);
+
+    if (imageItem) {
+      try {
+        console.log('🔄 Processing image...');
+        const file = imageItem.getAsFile();
+        if (!file) {
+          console.log('❌ Could not get file from image item');
+          return;
+        }
+
+        console.log('📁 File details:', { name: file.name, size: file.size, type: file.type });
+
+        // Convert image to data URL
+        const dataUrl = await fileToDataUrl(file);
+        console.log('🔗 Data URL created, length:', dataUrl.length);
+
+        // Get image dimensions
+        const { width: originalWidth, height: originalHeight } = await getImageDimensions(dataUrl);
+        console.log('📏 Image dimensions:', originalWidth, 'x', originalHeight);
+
+        // Calculate display size (scale down if too large)
+        const maxSize = 400;
+        const scale = Math.min(maxSize / originalWidth, maxSize / originalHeight, 1);
+        const displayWidth = originalWidth * scale;
+        const displayHeight = originalHeight * scale;
+        console.log('📐 Display size:', displayWidth, 'x', displayHeight, 'scale:', scale);
+
+        // Get canvas center for placement
+        const canvasBounds = canvasRef!.getBoundingClientRect();
+        const centerX = canvasBounds.width / 2;
+        const centerY = canvasBounds.height / 2;
+        console.log('🎯 Canvas center:', centerX, centerY);
+
+        // Create image shape at canvas center
+        console.log('🎨 Creating image shape...');
+        createImageAtPosition(centerX, centerY, displayWidth, displayHeight, dataUrl, originalWidth, originalHeight);
+        console.log('✅ Image shape created successfully!');
+
+      } catch (error) {
+        console.error('❌ Error pasting image:', error);
+      }
+    } else {
+      console.log('ℹ️ No image found in clipboard');
+    }
+  };
+
   const handleKeyDown = (e: KeyboardEvent) => {
     if (!isInitialized()) return;
 
@@ -606,7 +905,7 @@ const App: Component = () => {
       activeElement.closest('.monaco-editor') ||
       activeElement.tagName === 'INPUT' ||
       activeElement.tagName === 'TEXTAREA' ||
-      activeElement.contentEditable === 'true'
+      (activeElement as HTMLElement).contentEditable === 'true'
     );
 
     // If we're in an editor, only handle global shortcuts (Ctrl+Z, Ctrl+Y)

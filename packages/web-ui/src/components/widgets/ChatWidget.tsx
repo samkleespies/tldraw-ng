@@ -121,7 +121,8 @@ Get your API key from: https://platform.openai.com/api-keys`;
           shapeReferences: userMessage.shapeReferences,
           allFiles: getAllWorkspaceFiles(),
           projectStructure: getProjectStructure(),
-          canvasInfo: getCanvasInfo()
+          canvasInfo: getCanvasInfo(),
+          imageShapes: getImageShapes()
         };
 
         // Call real OpenAI API
@@ -303,7 +304,22 @@ Get your API key from: https://platform.openai.com/api-keys`;
     };
   };
 
-
+  /**
+   * Get image shapes for AI context
+   */
+  const getImageShapes = () => {
+    try {
+      const core = (window as any).whiteboardCore;
+      if (core && core.get_image_shapes) {
+        const imageShapesJson = core.get_image_shapes();
+        const imageShapes = JSON.parse(imageShapesJson);
+        return imageShapes;
+      }
+    } catch (e) {
+      console.log('Could not get image shapes:', e);
+    }
+    return [];
+  };
 
   /**
    * Handle key press in input
