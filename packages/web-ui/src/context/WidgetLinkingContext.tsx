@@ -144,6 +144,44 @@ export const capitalize = (str: string): string => {
   return str.charAt(0).toUpperCase() + str.slice(1);
 };`,
 
+  '/src/components/CanvasImage.tsx': `// Demo-compatible CanvasImage component
+// This is a simplified version for demo projects
+interface CanvasImageProps {
+  id: number;
+  alt?: string;
+  width?: number;
+  height?: number;
+  style?: any;
+}
+
+export function CanvasImage(props: CanvasImageProps) {
+  return (
+    <div style={{
+      width: props.width || 200,
+      height: props.height || 150,
+      background: 'linear-gradient(45deg, #ff6b6b, #4ecdc4)',
+      borderRadius: '8px',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      color: 'white',
+      fontWeight: 'bold',
+      fontSize: '14px',
+      ...props.style
+    }}>
+      🖼️ Canvas Image {props.id}
+    </div>
+  );
+}
+
+export function useCanvasImage(id: number): string | null {
+  return \`data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="150"><rect width="100%" height="100%" fill="%23ff6b6b"/><text x="50%" y="50%" text-anchor="middle" dy=".3em" fill="white">Image \${id}</text></svg>\`;
+}
+
+export function getAvailableCanvasImageIds(): number[] {
+  return [1, 2, 3, 4];
+}`,
+
   '/package.json': `{
   "name": "tldraw-ng-project",
   "private": true,

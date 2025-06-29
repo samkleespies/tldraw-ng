@@ -46,7 +46,7 @@ export interface FileModification {
 }
 
 export interface AIAction {
-  type: 'modify_files' | 'create_file' | 'delete_file' | 'open_file';
+  type: 'modify_files' | 'create_file' | 'delete_file' | 'open_file' | 'save_canvas_image';
   data: any;
   description: string;
 }
@@ -62,6 +62,28 @@ export interface ChatContext {
     viewportInfo: string;
   };
   imageShapes?: {
+    id: number;
+    position: { x: number; y: number };
+    width: number;
+    height: number;
+    original_width: number;
+    original_height: number;
+    data_url: string;
+    suggested_filename?: string;
+    available_actions?: {
+      save_as_asset: {
+        action_type: string;
+        description: string;
+        example_usage: string;
+      };
+    };
+  }[];
+  canvasAssetWorkflow?: {
+    description: string;
+    steps: string[];
+    available_actions: string[];
+  } | null;
+  selectedImages?: {
     id: number;
     position: { x: number; y: number };
     width: number;
@@ -168,6 +190,15 @@ Be helpful, concise, and focus on practical advice for development workflows.`;
         context.imageShapes.forEach((image, index) => {
           systemPrompt += `\n- Image ${image.id}: ${image.width}x${image.height} at (${image.position.x.toFixed(1)}, ${image.position.y.toFixed(1)})`;
         });
+        systemPrompt += `\n\nWhen analyzing images, please describe what you see in detail, including any text, logos, UI elements, code, or other content. Be specific about colors, layout, and any readable text.`;
+      }
+
+      if (context.selectedImages && context.selectedImages.length > 0) {
+        systemPrompt += `\n\n🎯 SELECTED IMAGES: The user has selected ${context.selectedImages.length} image(s) on the canvas:`;
+        context.selectedImages.forEach((image) => {
+          systemPrompt += `\n- Image ${image.id}: ${image.width}x${image.height} at (${image.position.x.toFixed(1)}, ${image.position.y.toFixed(1)})`;
+        });
+        systemPrompt += `\n\nThe user is likely asking about these specific selected images. Focus your response on these images and offer relevant actions like saving them as project assets or integrating them into the code.`;
       }
     }
 
@@ -198,7 +229,7 @@ Be helpful, concise, and focus on practical advice for development workflows.`;
           type: 'image_url',
           image_url: {
             url: image.data_url,
-            detail: 'low' // Use 'low' for faster processing, 'high' for more detail
+            detail: 'high' // Use 'high' for better text recognition and detail analysis
           }
         });
       });
@@ -305,6 +336,14 @@ export function parseAIActions(responseText: string): AIAction[] {
             type: 'open_file',
             data: parsedData,
             description: `Open ${parsedData.path}`
+          });
+          break;
+
+        case 'save_canvas_image':
+          actions.push({
+            type: 'save_canvas_image',
+            data: parsedData,
+            description: `Save image ${parsedData.imageId} as ${parsedData.filename}`
           });
           break;
       }

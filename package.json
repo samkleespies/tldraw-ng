@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "dev": "pnpm run build:wasm && pnpm -r --parallel dev",
+    "dev:external": "node scripts/dev-external.js",
     "dev:watch": "pnpm run build:wasm && concurrently \"pnpm run watch:wasm\" \"pnpm -r --parallel dev\"",
     "build": "pnpm run build:wasm && pnpm -r build",
     "build:wasm": "cd crates/core && wasm-pack build --target web --out-dir pkg && cd ../.. && pnpm run copy:wasm",

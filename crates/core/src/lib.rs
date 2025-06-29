@@ -466,7 +466,8 @@ impl WhiteboardCore {
         let base64_data = parts[1];
 
         // Decode base64 data
-        let image_bytes = base64::decode(base64_data)
+        use base64::Engine;
+        let image_bytes = base64::engine::general_purpose::STANDARD.decode(base64_data)
             .map_err(|e| format!("Failed to decode base64: {}", e))?;
 
         // For now, we'll assume the image is already in RGBA format
@@ -896,6 +897,41 @@ impl WhiteboardCore {
     #[wasm_bindgen]
     pub fn selected_count(&self) -> usize {
         self.selected_shapes.len()
+    }
+
+    /// Get selected shape IDs as JSON array
+    #[wasm_bindgen]
+    pub fn get_selected_shapes(&self) -> String {
+        let selected_ids: Vec<u32> = self.selected_shapes.iter().map(|id| id.0).collect();
+        serde_json::to_string(&selected_ids).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// Get selected image shapes as JSON for AI context
+    #[wasm_bindgen]
+    pub fn get_selected_image_shapes(&self) -> String {
+        let mut selected_images = Vec::new();
+
+        for &shape_id in &self.selected_shapes {
+            if let Some(shape) = self.shapes.get(&shape_id) {
+                if let ShapeType::Image { width, height, data_url, original_width, original_height } = &shape.shape_type {
+                    let image_info = serde_json::json!({
+                        "id": shape.id.0,
+                        "position": {
+                            "x": shape.position.x,
+                            "y": shape.position.y
+                        },
+                        "width": width,
+                        "height": height,
+                        "original_width": original_width,
+                        "original_height": original_height,
+                        "data_url": data_url
+                    });
+                    selected_images.push(image_info);
+                }
+            }
+        }
+
+        serde_json::to_string(&selected_images).unwrap_or_else(|_| "[]".to_string())
     }
 
     /// Check if a point is over any shape (for hover detection)

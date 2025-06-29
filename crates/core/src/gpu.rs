@@ -88,11 +88,7 @@ impl TextureCache {
         self.bind_groups.insert(data_url, bind_group);
     }
 
-    pub fn clear(&mut self) {
-        self.textures.clear();
-        self.texture_views.clear();
-        self.bind_groups.clear();
-    }
+
 }
 
 #[derive(Debug)]
@@ -110,7 +106,9 @@ pub struct GpuState {
     uniforms: Uniforms,
     texture_cache: TextureCache,
     sampler: wgpu::Sampler,
+    #[allow(dead_code)]
     default_texture: wgpu::Texture,
+    #[allow(dead_code)]
     default_texture_view: wgpu::TextureView,
 }
 
@@ -206,14 +204,14 @@ impl GpuState {
 
         // Upload white pixel data to default texture
         queue.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &default_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             &[255, 255, 255, 255], // White pixel
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4),
                 rows_per_image: Some(1),
@@ -495,14 +493,14 @@ impl GpuState {
 
         // Upload image data
         self.queue.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             image_data,
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4 * width),
                 rows_per_image: Some(height),
@@ -543,18 +541,5 @@ impl GpuState {
         Ok(())
     }
 
-    /// Get bind group for a specific texture (or default if not found)
-    pub fn get_bind_group_for_texture(&self, data_url: Option<&str>) -> &wgpu::BindGroup {
-        if let Some(data_url) = data_url {
-            if let Some(bind_group) = self.texture_cache.get_bind_group(data_url) {
-                return bind_group;
-            }
-        }
-        &self.bind_group // Default bind group with white texture
-    }
 
-    /// Clear texture cache (useful for memory management)
-    pub fn clear_texture_cache(&mut self) {
-        self.texture_cache.clear();
-    }
 }

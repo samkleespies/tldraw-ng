@@ -5,7 +5,8 @@ export default defineConfig({
   plugins: [solid()],
   server: {
     port: 3000,
-    host: true,
+    host: '0.0.0.0',
+    allowedHosts: true, // Allow ngrok and other external hosts
     fs: {
       allow: ['..', '../..']
     },

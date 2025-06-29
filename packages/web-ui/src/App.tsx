@@ -4,6 +4,7 @@ import OverlayContainer from './components/OverlayContainer';
 import { WidgetLinkingProvider } from './context/WidgetLinkingContext';
 // Import Monaco configuration early to prevent worker issues
 import './utils/monaco-config';
+// Canvas asset management is now handled through AI context
 
 // Message types for worker communication
 type MsgFromUI =
@@ -17,7 +18,7 @@ type MsgFromUI =
   | { type: 'command'; name: 'undo' | 'redo' | 'duplicate' | 'deleteSelection' | 'clear' }
   | { type: 'createWidget'; widgetType: 'monaco' | 'terminal' | 'preview' | 'chat' | 'explorer' | 'console'; x: number; y: number }
   | { type: 'toolChange'; tool: 'select' | 'rectangle' | 'ellipse' }
-  | { type: 'startShapeCreation'; tool: 'rectangle' | 'ellipse'; x: number; y: number }
+  | { type: 'startShapeCreation'; tool: 'rectangle' | 'ellipse' | 'monaco' | 'terminal' | 'preview' | 'chat' | 'explorer' | 'console'; x: number; y: number }
   | { type: 'updateShapeCreation'; x: number; y: number }
   | { type: 'finishShapeCreation' }
   | { type: 'cancelShapeCreation' }
@@ -55,6 +56,9 @@ const App: Component = () => {
 
   onMount(() => {
     initializeWorker();
+
+    // Canvas asset management is now handled through AI context
+    console.log('✅ Canvas asset management ready');
 
     // Add global event listeners
     console.log('🔧 Adding event listeners...');
@@ -172,9 +176,10 @@ const App: Component = () => {
       try {
         wasmModule = await import('./wasm/core.js');
         console.log('✅ WASM module loaded successfully');
-      } catch (importError) {
+      } catch (importError: unknown) {
         console.error('❌ Failed to import WASM module:', importError);
-        throw new Error(`Failed to import WASM module: ${importError.message}`);
+        const errorMessage = importError instanceof Error ? importError.message : String(importError);
+        throw new Error(`Failed to import WASM module: ${errorMessage}`);
       }
 
       // Initialize WASM with the correct path to the .wasm file
@@ -183,9 +188,10 @@ const App: Component = () => {
         const wasmUrl = new URL('./wasm/core_bg.wasm', import.meta.url);
         await wasmModule.default(wasmUrl);
         console.log('✅ WASM initialized successfully');
-      } catch (initError) {
+      } catch (initError: unknown) {
         console.error('❌ Failed to initialize WASM:', initError);
-        throw new Error(`Failed to initialize WASM: ${initError.message}`);
+        const errorMessage = initError instanceof Error ? initError.message : String(initError);
+        throw new Error(`Failed to initialize WASM: ${errorMessage}`);
       }
 
       setStatusMessage('Creating core...');
@@ -200,11 +206,25 @@ const App: Component = () => {
 
       setStatusMessage('Initializing WebGPU...');
 
-      // Set up canvas size properly
+      // Set up canvas size properly with GPU texture limits
       const rect = canvasRef.getBoundingClientRect();
       const devicePixelRatio = window.devicePixelRatio || 1;
-      canvasRef.width = rect.width * devicePixelRatio;
-      canvasRef.height = rect.height * devicePixelRatio;
+
+      // Calculate desired size
+      let desiredWidth = rect.width * devicePixelRatio;
+      let desiredHeight = rect.height * devicePixelRatio;
+
+      // Limit to common GPU texture size limits (2048 is safe for most GPUs)
+      const maxTextureSize = 2048;
+      if (desiredWidth > maxTextureSize || desiredHeight > maxTextureSize) {
+        const scale = Math.min(maxTextureSize / desiredWidth, maxTextureSize / desiredHeight);
+        desiredWidth = Math.floor(desiredWidth * scale);
+        desiredHeight = Math.floor(desiredHeight * scale);
+        console.log(`⚠️ Canvas size limited due to GPU constraints: ${desiredWidth}x${desiredHeight}`);
+      }
+
+      canvasRef.width = desiredWidth;
+      canvasRef.height = desiredHeight;
       canvasRef.style.width = rect.width + 'px';
       canvasRef.style.height = rect.height + 'px';
 
@@ -267,7 +287,7 @@ const App: Component = () => {
   /**
    * Set up global mouse capture for resize operations to prevent interruption
    */
-  const setupResizeMouseCapture = (startX: number, startY: number) => {
+  const setupResizeMouseCapture = (_startX: number, _startY: number) => {
     const core = (window as any).whiteboardCore;
     if (!core || !canvasRef) return;
 
@@ -343,7 +363,7 @@ const App: Component = () => {
             if (currentTool !== 'select') {
               sendToCore({
                 type: 'startShapeCreation',
-                tool: currentTool,
+                tool: currentTool as 'rectangle' | 'ellipse' | 'monaco' | 'terminal' | 'preview' | 'chat' | 'explorer' | 'console',
                 x: shapeCreationStartPos.x,
                 y: shapeCreationStartPos.y
               });
@@ -382,10 +402,8 @@ const App: Component = () => {
           isWaitingForShapeCreation = false;
         } else if (isCreatingShape()) {
           // Finish drag creation (works for both shapes and widgets)
-          const shapeId = sendToCore({ type: 'finishShapeCreation' });
-          if (shapeId) {
-            setShapeCount((window as any).whiteboardCore?.shape_count() || 0);
-          }
+          sendToCore({ type: 'finishShapeCreation' });
+          setShapeCount((window as any).whiteboardCore?.shape_count() || 0);
 
           // Auto-switch to select tool after drag-to-size creation
           setSelectedTool('select');
