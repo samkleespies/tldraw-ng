@@ -368,36 +368,21 @@ impl GpuState {
             .write_buffer(&self._uniform_buffer, 0, bytemuck::bytes_of(&self.uniforms));
     }
 
-    pub fn render_shapes(&mut self, vertices: &[Vertex], clear: bool) {
-        self.render_shapes_with_textures(vertices, &[], clear);
-    }
 
-    pub fn render_shapes_with_textures(&mut self, vertices: &[Vertex], _texture_data_urls: &[Option<String>], clear: bool) {
+
+    pub fn render_shapes_with_textures(&mut self, vertices: &[Vertex], texture_data_urls: &[Option<String>], clear: bool) {
         // Handle empty vertex arrays gracefully
         if vertices.is_empty() && !clear {
             // Nothing to render and no clearing needed
             return;
         }
-        
+
         let Ok(frame) = self.surface.get_current_texture() else {
             return;
         };
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-
-        // Upload vertices only if we have any
-        let vertex_buffer = if !vertices.is_empty() {
-            Some(self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("vertex-buffer"),
-                    contents: bytemuck::cast_slice(vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                }))
-        } else {
-            None
-        };
 
         let mut encoder = self
             .device
@@ -430,30 +415,55 @@ impl GpuState {
                 occlusion_query_set: None,
             });
 
-            // Only draw if we have vertices
-            if let Some(vertex_buffer) = vertex_buffer {
+            if !vertices.is_empty() {
                 rpass.set_pipeline(&self.pipeline);
-                rpass.set_vertex_buffer(0, vertex_buffer.slice(..));
 
-                // Check if we have any image shapes (shape_type = 3.0)
-                let has_images = vertices.iter().any(|v| v.shape_type >= 2.5);
+                // Separate vertices by texture requirements
+                let mut non_image_vertices = Vec::new();
+                let mut image_batches: HashMap<String, Vec<Vertex>> = HashMap::new();
 
-                if has_images {
-                    // For now, use the first available bind group in cache for image shapes
-                    // In a more sophisticated implementation, we'd batch by texture
-                    let bind_group = if let Some((_, bind_group)) = self.texture_cache.bind_groups.iter().next() {
-                        bind_group
+                for (i, vertex) in vertices.iter().enumerate() {
+                    if vertex.shape_type >= 2.5 {
+                        // This is an image vertex
+                        if let Some(Some(data_url)) = texture_data_urls.get(i / 6) { // 6 vertices per image quad
+                            image_batches.entry(data_url.clone()).or_insert_with(Vec::new).push(*vertex);
+                        } else {
+                            // Fallback to non-image rendering if no texture URL
+                            non_image_vertices.push(*vertex);
+                        }
                     } else {
-                        &self.bind_group // Fallback to default
-                    };
-                    rpass.set_bind_group(0, bind_group, &[]);
-                } else {
-                    // Use default bind group for non-image shapes
-                    rpass.set_bind_group(0, &self.bind_group, &[]);
+                        // Non-image vertex
+                        non_image_vertices.push(*vertex);
+                    }
                 }
 
-                let vert_count = vertices.len() as u32;
-                rpass.draw(0..vert_count, 0..1);
+                // Render non-image vertices with default bind group
+                if !non_image_vertices.is_empty() {
+                    let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("non-image-vertex-buffer"),
+                        contents: bytemuck::cast_slice(&non_image_vertices),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+
+                    rpass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                    rpass.set_bind_group(0, &self.bind_group, &[]);
+                    rpass.draw(0..non_image_vertices.len() as u32, 0..1);
+                }
+
+                // Render each image batch with its specific texture
+                for (data_url, batch_vertices) in image_batches {
+                    if let Some(bind_group) = self.texture_cache.get_bind_group(&data_url) {
+                        let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("image-vertex-buffer"),
+                            contents: bytemuck::cast_slice(&batch_vertices),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        });
+
+                        rpass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                        rpass.set_bind_group(0, bind_group, &[]);
+                        rpass.draw(0..batch_vertices.len() as u32, 0..1);
+                    }
+                }
             }
         }
 

@@ -71,6 +71,14 @@ export const ConsoleWidget: Component<ConsoleWidgetProps> = (props) => {
 
     // Subscribe to console broadcaster
     unsubscribeFromBroadcaster = consoleBroadcaster.addListener((message: ConsoleMessage) => {
+      // Handle special clear message
+      if (message.message === '__CONSOLE_CLEAR__') {
+        setLogs([]);
+        setFilteredLogs([]);
+        updateStats();
+        return;
+      }
+
       if (!isPaused()) {
         const logEntry: LogEntry = {
           id: message.id,
@@ -203,6 +211,10 @@ export const ConsoleWidget: Component<ConsoleWidgetProps> = (props) => {
    */
   const clearLogs = () => {
     consoleBroadcaster.clear();
+    // Also clear the local logs state immediately
+    setLogs([]);
+    setFilteredLogs([]);
+    updateStats();
   };
 
   /**

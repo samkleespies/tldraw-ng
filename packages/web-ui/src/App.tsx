@@ -2,6 +2,7 @@ import { Component, createSignal, onMount, onCleanup } from 'solid-js';
 import { initializeCoordinateTransformer, getCoordinateTransformer } from './utils/coordinates';
 import OverlayContainer from './components/OverlayContainer';
 import { WidgetLinkingProvider } from './context/WidgetLinkingContext';
+import ShapeToolsDropdown from './components/ShapeToolsDropdown';
 // Import Monaco configuration early to prevent worker issues
 import './utils/monaco-config';
 // Canvas asset management is now handled through AI context
@@ -309,6 +310,10 @@ const App: Component = () => {
 
       core.handle_pointer_up(upX, upY);
       setIsDragging(core.is_dragging());
+
+      // Reset resize cursor when resize operation ends
+      setResizeCursor('default');
+
       core.render_frame();
 
       // Clean up global event listeners
@@ -1097,30 +1102,6 @@ const App: Component = () => {
 
         <div class="tool-separator" />
 
-        <button
-          class={`tool-btn ${selectedTool() === 'rectangle' ? 'active' : ''}`}
-          onClick={() => handleToolChange('rectangle')}
-          disabled={!isInitialized()}
-          title="Square (R)"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="4" y="4" width="8" height="8" rx="1"/>
-          </svg>
-        </button>
-
-        <button
-          class={`tool-btn ${selectedTool() === 'ellipse' ? 'active' : ''}`}
-          onClick={() => handleToolChange('ellipse')}
-          disabled={!isInitialized()}
-          title="Circle (O)"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-            <circle cx="8" cy="8" r="4"/>
-          </svg>
-        </button>
-
-        <div class="tool-separator" />
-
         {/* Widget Tools */}
         <button
           class={`tool-btn ${selectedTool() === 'monaco' ? 'active' : ''}`}
@@ -1211,29 +1192,12 @@ const App: Component = () => {
 
         <div class="tool-separator" />
 
-        {/* Undo/Redo buttons on the far right */}
-        <button
-          class="tool-btn"
-          onClick={() => handleCommand('undo')}
+        {/* Shape Tools Dropdown - rightmost position */}
+        <ShapeToolsDropdown
+          selectedTool={selectedTool()}
+          onToolChange={handleToolChange}
           disabled={!isInitialized()}
-          title="Undo (Ctrl+Z)"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 7v6h6"/>
-            <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>
-          </svg>
-        </button>
-        <button
-          class="tool-btn"
-          onClick={() => handleCommand('redo')}
-          disabled={!isInitialized()}
-          title="Redo (Ctrl+Y)"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 7v6h-6"/>
-            <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/>
-          </svg>
-        </button>
+        />
       </div>
     </div>
     </WidgetLinkingProvider>

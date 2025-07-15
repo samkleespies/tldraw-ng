@@ -50,6 +50,18 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
   // Resize handles state
   const [resizeHandles, setResizeHandles] = createSignal<ResizeHandle[]>([]);
 
+  // Selection box state
+  const [selectionBox, setSelectionBox] = createSignal<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    visible: boolean;
+  } | null>(null);
+
+  // Selection state for reactive updates
+  const [selectedWidgets, setSelectedWidgets] = createSignal<number[]>([]);
+
 
 
   let containerRef: HTMLDivElement | undefined;
@@ -79,6 +91,8 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
       if (isInitialized()) {
         syncOverlaysWithCanvas();
         updateResizeHandles();
+        updateSelectionBox();
+        updateSelectionState();
 
         // Calculate frame rate every second
         frameCount++;
@@ -104,6 +118,18 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
 
     if (!core || !transformer || !props.canvasRef) {
       return;
+    }
+
+    // Debug: Check available methods (only log once)
+    if (!(window as any).debugMethodsLogged) {
+      console.log(`[DEBUG] Available core methods:`, {
+        get_selected_shapes: typeof core.get_selected_shapes,
+        add_widget_to_selection: typeof core.add_widget_to_selection,
+        remove_widget_from_selection: typeof core.remove_widget_from_selection,
+        select_widget: typeof core.select_widget,
+        is_selection_dragging: typeof core.is_selection_dragging
+      });
+      (window as any).debugMethodsLogged = true;
     }
 
     try {
@@ -186,16 +212,70 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
    */
   const handleWidgetClick = (e: MouseEvent, overlay: WidgetOverlay) => {
     e.stopPropagation();
+    console.log(`[DEBUG] handleWidgetClick: widget ${overlay.id}, ctrlKey=${e.ctrlKey}`);
 
-    // Select this widget for resize handles (but no visual selection outline)
     const core = (window as any).whiteboardCore;
-    if (core && overlay.id) {
-      if (typeof core.select_widget === 'function') {
-        core.select_widget(overlay.id);
+    if (!core || !overlay.id) {
+      console.log(`[DEBUG] handleWidgetClick: no core or overlay.id`);
+      return;
+    }
+
+    // Check if Ctrl key is pressed for multi-select
+    const ctrlKey = e.ctrlKey || e.metaKey;
+
+    // Get current selection state
+    let currentSelectedShapes: number[] = [];
+    try {
+      const selectedShapesJson = core.get_selected_shapes ? core.get_selected_shapes() : "[]";
+      currentSelectedShapes = JSON.parse(selectedShapesJson);
+      console.log(`[DEBUG] handleWidgetClick: current selection=${JSON.stringify(currentSelectedShapes)}`);
+    } catch (e) {
+      currentSelectedShapes = [];
+      console.log(`[DEBUG] handleWidgetClick: error getting selection=${e}`);
+    }
+
+    if (ctrlKey) {
+      // Multi-select mode: toggle widget in selection
+      console.log(`[DEBUG] handleWidgetClick: ctrl mode`);
+      if (currentSelectedShapes.includes(overlay.id)) {
+        // Remove from selection
+        console.log(`[DEBUG] handleWidgetClick: removing widget ${overlay.id} from selection`);
+        if (typeof core.remove_widget_from_selection === 'function') {
+          core.remove_widget_from_selection(overlay.id);
+        } else {
+          console.log(`[DEBUG] handleWidgetClick: remove_widget_from_selection not available`);
+        }
+      } else {
+        // Add to selection
+        console.log(`[DEBUG] handleWidgetClick: adding widget ${overlay.id} to selection`);
+        if (typeof core.add_widget_to_selection === 'function') {
+          core.add_widget_to_selection(overlay.id);
+        } else {
+          console.log(`[DEBUG] handleWidgetClick: add_widget_to_selection not available`);
+        }
       }
-      if (typeof core.render_frame === 'function') {
-        core.render_frame();
+    } else {
+      // Single-select mode
+      console.log(`[DEBUG] handleWidgetClick: single select mode`);
+      if (currentSelectedShapes.length > 1 && currentSelectedShapes.includes(overlay.id)) {
+        // Clicking on a widget that's part of a multi-selection - keep the multi-selection
+        console.log(`[DEBUG] handleWidgetClick: keeping multi-selection`);
+        // Don't change anything
+      } else {
+        // Single select this widget
+        console.log(`[DEBUG] handleWidgetClick: single selecting widget ${overlay.id}`);
+        if (typeof core.select_widget === 'function') {
+          core.select_widget(overlay.id);
+        } else {
+          console.log(`[DEBUG] handleWidgetClick: select_widget not available`);
+        }
       }
+    }
+
+    if (typeof core.render_frame === 'function') {
+      core.render_frame();
+    } else {
+      console.log(`[DEBUG] handleWidgetClick: render_frame not available`);
     }
   };
 
@@ -207,17 +287,15 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
     if (!core || !props.canvasRef) return;
 
     try {
-      // Get resize handles from core (we need to add this function to the Rust core)
+      // Get resize handles from core (already returns screen coordinates)
       if (typeof core.get_resize_handles_for_overlay === 'function') {
         const handles = core.get_resize_handles_for_overlay();
-        const canvasBounds = props.canvasRef.getBoundingClientRect();
 
-        // Convert world coordinates to screen coordinates
-        const transformer = getCoordinateTransformer();
+        // The handles already come in screen coordinates, no need for additional conversion
         const convertedHandles: ResizeHandle[] = handles.map((handle: any) => ({
           type: handle.type,
-          x: handle.x - canvasBounds.left,
-          y: handle.y - canvasBounds.top,
+          x: handle.x,
+          y: handle.y,
           size: handle.size
         }));
 
@@ -228,6 +306,67 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
     } catch (e) {
       console.error('Error updating resize handles:', e);
       setResizeHandles([]);
+    }
+  };
+
+  /**
+   * Update selection state from core
+   */
+  const updateSelectionState = () => {
+    const core = (window as any).whiteboardCore;
+    if (!core) return;
+
+    try {
+      const selectedShapesJson = core.get_selected_shapes ? core.get_selected_shapes() : "[]";
+      const selectedShapes = JSON.parse(selectedShapesJson);
+      setSelectedWidgets(selectedShapes);
+    } catch (e) {
+      setSelectedWidgets([]);
+    }
+  };
+
+  /**
+   * Update selection box from core
+   */
+  const updateSelectionBox = () => {
+    const core = (window as any).whiteboardCore;
+    if (!core || !props.canvasRef) return;
+
+    try {
+      const isDragging = core.is_selection_dragging && core.is_selection_dragging();
+
+      if (isDragging) {
+        // Get selection box coordinates from core
+        if (typeof core.get_selection_box_for_overlay === 'function') {
+          const box = core.get_selection_box_for_overlay();
+          if (box) {
+            setSelectionBox({
+              x: box.x,
+              y: box.y,
+              width: box.width,
+              height: box.height,
+              visible: true
+            });
+          }
+        }
+      } else {
+        // Selection box finished - check what was selected
+        const wasSelecting = selectionBox()?.visible;
+        if (wasSelecting) {
+          console.log(`[DEBUG] Selection box finished, checking selected shapes...`);
+          try {
+            const selectedShapesJson = core.get_selected_shapes ? core.get_selected_shapes() : "[]";
+            const selectedShapes = JSON.parse(selectedShapesJson);
+            console.log(`[DEBUG] After selection box: selected shapes = ${JSON.stringify(selectedShapes)}`);
+          } catch (e) {
+            console.log(`[DEBUG] Error getting selected shapes after selection: ${e}`);
+          }
+        }
+        setSelectionBox(null);
+      }
+    } catch (e) {
+      console.error('Error updating selection box:', e);
+      setSelectionBox(null);
     }
   };
 
@@ -282,6 +421,9 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
 
       core.handle_pointer_up(upX, upY);
       core.render_frame();
+
+      // Update resize handles after resize operation ends
+      updateResizeHandles();
 
       // Remove global event listeners
       document.removeEventListener('mousemove', handleMouseMove);
@@ -342,17 +484,62 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
 
   /**
    * Handle widget mouse events to prevent canvas interference
+   * Note: When selection dragging is active, widgets should be completely transparent to mouse events
+   * Also allow middle mouse button events to pass through for canvas panning
    */
   const handleWidgetMouseDown = (e: MouseEvent) => {
+    // Always allow selection box events to pass through
+    const core = (window as any).whiteboardCore;
+    if (core && core.is_selection_dragging && core.is_selection_dragging()) {
+      // Don't stop propagation - let the event reach the canvas
+      return;
+    }
+
+    // Allow middle mouse button events to pass through for canvas panning
+    if (e.button === 1) {
+      return;
+    }
+
     e.stopPropagation();
   };
 
   const handleWidgetMouseMove = (e: MouseEvent) => {
+    // Always allow selection box events to pass through
+    const core = (window as any).whiteboardCore;
+    if (core && core.is_selection_dragging && core.is_selection_dragging()) {
+      // Don't stop propagation - let the event reach the canvas
+      return;
+    }
+
+    // Allow middle mouse button events to pass through for canvas panning
+    if (e.buttons & 4) { // Middle mouse button is pressed
+      return;
+    }
+
     e.stopPropagation();
   };
 
   const handleWidgetMouseUp = (e: MouseEvent) => {
+    // Always allow selection box events to pass through
+    const core = (window as any).whiteboardCore;
+    if (core && core.is_selection_dragging && core.is_selection_dragging()) {
+      // Don't stop propagation - let the event reach the canvas
+      return;
+    }
+
+    // Allow middle mouse button events to pass through for canvas panning
+    if (e.button === 1) {
+      return;
+    }
+
     e.stopPropagation();
+  };
+
+  /**
+   * Check if a widget is selected (reactive)
+   */
+  const isWidgetSelected = (widgetId: number): boolean => {
+    return selectedWidgets().includes(widgetId);
   };
 
   /**
@@ -364,24 +551,49 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
       return 'display: none;';
     }
 
+    // Check if selection dragging is active to disable pointer events
+    const core = (window as any).whiteboardCore;
+    const isSelectionDragging = core && core.is_selection_dragging && core.is_selection_dragging();
+
+    // Check if resizing is active to disable pointer events on other widgets
+    const isResizing = core && core.is_resizing && core.is_resizing();
+
+    // Check if shape creation is active to disable pointer events on other widgets
+    const isCreatingShape = core && core.is_creating_shape && core.is_creating_shape();
+
+    // Disable pointer events during selection dragging, resizing, or shape creation to prevent interference
+    const pointerEvents = (isSelectionDragging || isResizing || isCreatingShape) ? 'none' : (overlay.active ? 'auto' : 'none');
+
+    // Check if this widget is selected
+    const isSelected = isWidgetSelected(overlay.id);
+    const selectionBorder = isSelected ? '2px solid rgba(77, 153, 255, 0.8)' : '0';
+    const selectionBoxShadow = isSelected ? '0 0 0 1px rgba(77, 153, 255, 0.3)' : 'none';
+
+    // Get camera scale for content scaling
+    const cameraScale = core ? core.get_camera_scale() : 1.0;
+
+    // Calculate the unscaled dimensions (original widget size)
+    const unscaledWidth = overlay.bounds.width / cameraScale;
+    const unscaledHeight = overlay.bounds.height / cameraScale;
+
     return `
       position: absolute;
       left: ${overlay.bounds.x}px;
       top: ${overlay.bounds.y}px;
-      width: ${overlay.bounds.width}px;
-      height: ${overlay.bounds.height}px;
+      width: ${unscaledWidth}px;
+      height: ${unscaledHeight}px;
+      transform: scale(${cameraScale});
+      transform-origin: top left;
       z-index: ${overlay.zIndex};
-      pointer-events: ${overlay.active ? 'auto' : 'none'};
+      pointer-events: ${pointerEvents};
       border-radius: 8px;
       overflow: hidden;
       cursor: ${overlay.active ? 'default' : 'pointer'};
-      box-shadow: none !important;
+      border: ${selectionBorder};
+      box-shadow: ${selectionBoxShadow};
       outline: 0 !important;
-      border: 0 !important;
       outline-width: 0 !important;
-      border-width: 0 !important;
       outline-style: none !important;
-      border-style: none !important;
     `;
   };
 
@@ -603,6 +815,32 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
   // Create a memo for overlay IDs to prevent unnecessary re-renders
   const overlayIds = createMemo(() => Object.keys(overlayStore).map(Number));
 
+  // Debug function to check selection state
+  const debugSelection = () => {
+    const core = (window as any).whiteboardCore;
+    if (!core) {
+      console.log('[DEBUG] No core available');
+      return;
+    }
+
+    try {
+      const selectedShapesJson = core.get_selected_shapes ? core.get_selected_shapes() : "[]";
+      const selectedShapes = JSON.parse(selectedShapesJson);
+      console.log('[DEBUG] Current selection:', selectedShapes);
+
+      // Check if any widgets are selected
+      const widgets = Object.keys(overlayStore).map(Number);
+      const selectedWidgets = widgets.filter(id => selectedShapes.includes(id));
+      console.log('[DEBUG] Selected widgets:', selectedWidgets);
+      console.log('[DEBUG] All widgets:', widgets);
+    } catch (e) {
+      console.log('[DEBUG] Error checking selection:', e);
+    }
+  };
+
+  // Add debug function to window for easy access
+  (window as any).debugSelection = debugSelection;
+
   return (
     <div
       ref={containerRef}
@@ -653,6 +891,24 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
           />
         )}
       </For>
+
+      {/* Selection Box Overlay - Always on top */}
+      {selectionBox() && (
+        <div
+          style={`
+            position: absolute;
+            left: ${selectionBox()!.x}px;
+            top: ${selectionBox()!.y}px;
+            width: ${selectionBox()!.width}px;
+            height: ${selectionBox()!.height}px;
+            background: rgba(77, 153, 255, 0.2);
+            border: 1px solid rgba(77, 153, 255, 0.8);
+            z-index: 2000;
+            pointer-events: none;
+            box-sizing: border-box;
+          `}
+        />
+      )}
     </div>
   );
 };

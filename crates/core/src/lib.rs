@@ -962,6 +962,41 @@ impl WhiteboardCore {
         self.is_resizing
     }
 
+    /// Check if currently dragging selection rectangle
+    #[wasm_bindgen]
+    pub fn is_selection_dragging(&self) -> bool {
+        self.is_selection_dragging
+    }
+
+    /// Get selection box for overlay rendering (returns screen coordinates)
+    #[wasm_bindgen]
+    pub fn get_selection_box_for_overlay(&self) -> Option<js_sys::Object> {
+        if !self.is_selection_dragging {
+            return None;
+        }
+
+        if let (Some(start), Some(current)) = (self.selection_start, self.selection_current) {
+            // Convert world coordinates to screen coordinates
+            let start_screen = self.world_to_screen(start.x, start.y);
+            let current_screen = self.world_to_screen(current.x, current.y);
+
+            let min_x = start_screen[0].min(current_screen[0]);
+            let max_x = start_screen[0].max(current_screen[0]);
+            let min_y = start_screen[1].min(current_screen[1]);
+            let max_y = start_screen[1].max(current_screen[1]);
+
+            let js_box = js_sys::Object::new();
+            js_sys::Reflect::set(&js_box, &"x".into(), &min_x.into()).unwrap();
+            js_sys::Reflect::set(&js_box, &"y".into(), &min_y.into()).unwrap();
+            js_sys::Reflect::set(&js_box, &"width".into(), &(max_x - min_x).into()).unwrap();
+            js_sys::Reflect::set(&js_box, &"height".into(), &(max_y - min_y).into()).unwrap();
+
+            Some(js_box)
+        } else {
+            None
+        }
+    }
+
     /// Get current camera scale for coordinate conversion
     #[wasm_bindgen]
     pub fn get_camera_scale(&self) -> f64 {
@@ -1284,11 +1319,6 @@ impl WhiteboardCore {
 
         let mut selected_shapes = Vec::new();
         for (id, shape) in &self.shapes {
-            // Skip widgets - they should never be selected via rectangle selection
-            if matches!(shape.shape_type, ShapeType::Widget { .. }) {
-                continue;
-            }
-
             let shape_bbox = shape.bounding_box();
 
             // Check if shape intersects with selection rectangle
@@ -1303,16 +1333,44 @@ impl WhiteboardCore {
         selected_shapes
     }
 
+    /// Get widgets within a selection rectangle
+    fn get_widgets_in_rectangle(&self, start: Point, end: Point) -> Vec<ShapeId> {
+        let min_x = start.x.min(end.x);
+        let max_x = start.x.max(end.x);
+        let min_y = start.y.min(end.y);
+        let max_y = start.y.max(end.y);
+
+        let selection_rect = BoundingBox::new(min_x, min_y, max_x, max_y);
+
+        let mut selected_widgets = Vec::new();
+        for (id, shape) in &self.shapes {
+            // Only include widgets
+            if matches!(shape.shape_type, ShapeType::Widget { .. }) {
+                let shape_bbox = shape.bounding_box();
+
+                // Check if widget intersects with selection rectangle
+                if shape_bbox.max_x >= selection_rect.min_x &&
+                   shape_bbox.min_x <= selection_rect.max_x &&
+                   shape_bbox.max_y >= selection_rect.min_y &&
+                   shape_bbox.min_y <= selection_rect.max_y {
+                    selected_widgets.push(*id);
+                }
+            }
+        }
+
+        selected_widgets
+    }
+
     /// Get resize handles for selected shapes or widgets
     fn get_resize_handles(&self) -> Vec<ResizeHandleInfo> {
         let mut handles = Vec::new();
 
         // Determine which shape to show resize handles for
         let target_shape_id = if self.selected_shapes.len() == 1 {
-            // Regular shape is selected
+            // Exactly one shape/widget is selected (could be regular shape or widget)
             Some(self.selected_shapes[0])
         } else if let Some(widget_id) = self.selected_widget {
-            // Widget is selected
+            // Single widget is selected via old selection system
             Some(widget_id)
         } else {
             None
@@ -1615,7 +1673,16 @@ impl WhiteboardCore {
             // Update selection based on current rectangle
             if let (Some(start), Some(current)) = (self.selection_start, self.selection_current) {
                 let shapes_in_rect = self.get_shapes_in_rectangle(start, current);
-                self.selected_shapes = shapes_in_rect;
+                let widgets_in_rect = self.get_widgets_in_rectangle(start, current);
+
+                // Combine shapes and widgets in selection
+                let mut all_selected = shapes_in_rect;
+                all_selected.extend(widgets_in_rect);
+
+                self.selected_shapes = all_selected;
+
+                // Clear single widget selection since we're now using multi-selection
+                self.selected_widget = None;
             }
         } else if self.is_dragging {
             // Handle dragging
@@ -1670,6 +1737,32 @@ impl WhiteboardCore {
         // Clear regular shape selection and set widget selection
         self.selected_shapes.clear();
         self.selected_widget = Some(shape_id);
+    }
+
+    /// Add a widget to the current multi-selection
+    #[wasm_bindgen]
+    pub fn add_widget_to_selection(&mut self, widget_id: u32) {
+        let shape_id = ShapeId(widget_id);
+
+        // Check if the widget exists
+        if !self.shapes.contains_key(&shape_id) {
+            return;
+        }
+
+        // Add to selected_shapes if not already there
+        if !self.selected_shapes.contains(&shape_id) {
+            self.selected_shapes.push(shape_id);
+        }
+
+        // Clear single widget selection since we're using multi-selection
+        self.selected_widget = None;
+    }
+
+    /// Remove a widget from the current multi-selection
+    #[wasm_bindgen]
+    pub fn remove_widget_from_selection(&mut self, widget_id: u32) {
+        let shape_id = ShapeId(widget_id);
+        self.selected_shapes.retain(|&id| id != shape_id);
     }
 
     /// Get resize handles for overlay rendering (returns screen coordinates)
@@ -1810,26 +1903,26 @@ impl WhiteboardCore {
         self.clean_widget_selection();
 
         // Split the borrow to avoid borrow checker issues
-        let vertices = self.tessellate_shapes();
+        let (vertices, texture_data_urls) = self.tessellate_shapes_with_textures();
         if let Some(gpu) = &mut self.gpu {
-            gpu.render_shapes(&vertices, true);
+            gpu.render_shapes_with_textures(&vertices, &texture_data_urls, true);
         }
     }
 
-    /// Remove any widgets from the selected_shapes list - widgets should never be selected
+    /// Remove any invalid shape IDs from the selected_shapes list
     fn clean_widget_selection(&mut self) {
         self.selected_shapes.retain(|&shape_id| {
-            if let Some(shape) = self.shapes.get(&shape_id) {
-                !matches!(shape.shape_type, ShapeType::Widget { .. })
-            } else {
-                false // Remove invalid shape IDs too
-            }
+            // Only remove invalid shape IDs, but allow widgets to be selected
+            self.shapes.contains_key(&shape_id)
         });
     }
 
-    /// Tessellate all shapes into vertices for GPU rendering
-    fn tessellate_shapes(&self) -> Vec<Vertex> {
+
+
+    /// Tessellate all shapes into vertices for GPU rendering, with texture data URLs
+    fn tessellate_shapes_with_textures(&self) -> (Vec<Vertex>, Vec<Option<String>>) {
         let mut vertices = Vec::new();
+        let mut texture_data_urls = Vec::new();
 
         // Clean up any widgets that might have accidentally gotten into selected_shapes
         // This is a safety measure to ensure widgets never show selection outlines
@@ -1839,13 +1932,19 @@ impl WhiteboardCore {
             match &shape.shape_type {
                 ShapeType::Rectangle { width, height } => {
                     self.tessellate_rectangle_outline(&mut vertices, shape.position, *width, *height, shape.color, 2.0);
+                    // Add None for non-image shapes (they don't need textures)
+                    texture_data_urls.push(None);
                 }
                 ShapeType::Ellipse { width, height } => {
                     self.tessellate_ellipse_outline(&mut vertices, shape.position, *width, *height, shape.color, 2.0);
+                    // Add None for non-image shapes (they don't need textures)
+                    texture_data_urls.push(None);
                 }
-                ShapeType::Image { width, height, .. } => {
+                ShapeType::Image { width, height, data_url, .. } => {
                     // Render images as textured quads
                     self.tessellate_image_quad(&mut vertices, shape.position, *width, *height);
+                    // Add the texture data URL for this image
+                    texture_data_urls.push(Some(data_url.clone()));
                 }
                 ShapeType::Widget { .. } => {
                     // Don't render any outline for widgets - show raw widget form only
@@ -1860,23 +1959,21 @@ impl WhiteboardCore {
                 // Double-check: never render selection outlines for widgets
                 if !matches!(shape.shape_type, ShapeType::Widget { .. }) {
                     self.tessellate_selection_outline(&mut vertices, shape);
+                    // Selection outlines don't need textures
+                    texture_data_urls.push(None);
                 }
             }
         }
 
-        // Render selection rectangle if dragging
-        if self.is_selection_dragging {
-            if let (Some(start), Some(current)) = (self.selection_start, self.selection_current) {
-                self.tessellate_selection_rectangle(&mut vertices, start, current);
-            }
-        }
+        // Selection rectangle is now rendered as HTML overlay for proper z-index layering
+        // This ensures it appears on top of all widgets and shapes
 
         // No need for preview rendering - we modify the actual shape in real-time
 
         // Skip rendering resize handles on canvas - they are now rendered as HTML overlays
         // This prevents z-index issues where handles appear behind widgets
 
-        vertices
+        (vertices, texture_data_urls)
     }
 
     // Note: These filled tessellation functions are no longer used since we switched to outline-only rendering
@@ -2065,37 +2162,5 @@ impl WhiteboardCore {
             shape_type,
         });
     }
-    fn tessellate_selection_rectangle(&self, vertices: &mut Vec<Vertex>, start: Point, end: Point) {
-        let min_x = start.x.min(end.x) as f32;
-        let max_x = start.x.max(end.x) as f32;
-        let min_y = start.y.min(end.y) as f32;
-        let max_y = start.y.max(end.y) as f32;
 
-        // Windows 11 style selection rectangle: semi-transparent blue fill with blue border
-        let fill_color = [0.3, 0.6, 1.0, 0.2]; // Semi-transparent blue
-        let border_color = [0.3, 0.6, 1.0, 0.8]; // Solid blue border
-        let border_width = 1.0;
-
-        // Render fill first (background)
-        vertices.extend_from_slice(&[
-            // Triangle 1
-            Vertex { position: [min_x, min_y], color: fill_color, uv: [0.0, 0.0], shape_type: 0.0 },
-            Vertex { position: [max_x, min_y], color: fill_color, uv: [1.0, 0.0], shape_type: 0.0 },
-            Vertex { position: [min_x, max_y], color: fill_color, uv: [0.0, 1.0], shape_type: 0.0 },
-            // Triangle 2
-            Vertex { position: [max_x, min_y], color: fill_color, uv: [1.0, 0.0], shape_type: 0.0 },
-            Vertex { position: [max_x, max_y], color: fill_color, uv: [1.0, 1.0], shape_type: 0.0 },
-            Vertex { position: [min_x, max_y], color: fill_color, uv: [0.0, 1.0], shape_type: 0.0 },
-        ]);
-
-        // Render border on top
-        // Top edge
-        self.tessellate_outline_edge(vertices, min_x, min_y, max_x, min_y, border_width, border_color);
-        // Right edge
-        self.tessellate_outline_edge(vertices, max_x, min_y, max_x, max_y, border_width, border_color);
-        // Bottom edge
-        self.tessellate_outline_edge(vertices, max_x, max_y, min_x, max_y, border_width, border_color);
-        // Left edge
-        self.tessellate_outline_edge(vertices, min_x, max_y, min_x, min_y, border_width, border_color);
-    }
 }

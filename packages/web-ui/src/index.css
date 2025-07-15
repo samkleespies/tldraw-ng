@@ -168,6 +168,104 @@ body {
   margin: 0 6px;
 }
 
+/* Shape Tools Dropdown */
+.shape-tools-dropdown {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.shape-tools-main {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.shape-tools-main .tool-btn {
+  border-radius: 6px 0 0 6px;
+}
+
+.shape-tools-main .caret-btn {
+  width: 20px;
+  border-radius: 0 6px 6px 0;
+  border-left: 1px solid #505050;
+  padding: 0;
+}
+
+.shape-tools-main .caret-btn svg {
+  width: 8px;
+  height: 8px;
+  transition: transform 0.15s ease;
+}
+
+.shape-tools-main .caret-btn.open svg {
+  transform: rotate(180deg);
+}
+
+.shape-tools-menu {
+  position: absolute;
+  bottom: 50px;
+  left: 0;
+  background: #2d2d2d;
+  border: 1px solid #404040;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  padding: 8px;
+  z-index: 1000;
+  animation: dropdownSlideUp 0.2s ease-out;
+}
+
+@keyframes dropdownSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.shape-tools-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  width: 160px;
+}
+
+.shape-tool-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #ffffff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.shape-tool-item:hover:not(.disabled) {
+  background: #404040;
+}
+
+.shape-tool-item.active {
+  background: #5865f2;
+  color: white;
+}
+
+.shape-tool-item.disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.shape-tool-item svg {
+  width: 20px;
+  height: 20px;
+}
+
 /* Status indicator - top left corner dark theme */
 .status-indicator {
   position: absolute;
@@ -340,6 +438,169 @@ div[data-widget-id][data-widget-type] {
 
 
 
+
+/* Custom scrollbars - Chrome fluent overlay style */
+/* Webkit browsers (Chrome, Safari, Edge) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.6);
+  border-radius: 4px;
+  border: none;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.8);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: rgba(128, 128, 128, 1);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.6) transparent;
+}
+
+/* Widget-specific scrollbar styling */
+[data-widget-id] ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+[data-widget-id] ::-webkit-scrollbar-thumb {
+  background: rgba(100, 100, 100, 0.7);
+  border-radius: 3px;
+}
+
+[data-widget-id] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 120, 120, 0.9);
+}
+
+/* Terminal widget scrollbar - more specific targeting */
+.xterm .xterm-viewport::-webkit-scrollbar {
+  width: 8px !important;
+  height: 8px !important;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(120, 120, 120, 0.8) !important;
+  border-radius: 4px !important;
+  border: none !important;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(140, 140, 140, 0.9) !important;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+/* Additional xterm scrollbar targeting */
+.xterm-viewport::-webkit-scrollbar {
+  width: 8px !important;
+  height: 8px !important;
+}
+
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(120, 120, 120, 0.8) !important;
+  border-radius: 4px !important;
+  border: none !important;
+}
+
+.xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(140, 140, 140, 0.9) !important;
+}
+
+.xterm-viewport::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+/* Terminal container scrollbar */
+[data-widget-type="terminal"] .xterm::-webkit-scrollbar,
+[data-widget-type="terminal"] .xterm-viewport::-webkit-scrollbar {
+  width: 8px !important;
+  height: 8px !important;
+}
+
+[data-widget-type="terminal"] .xterm::-webkit-scrollbar-thumb,
+[data-widget-type="terminal"] .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(120, 120, 120, 0.8) !important;
+  border-radius: 4px !important;
+  border: none !important;
+}
+
+[data-widget-type="terminal"] .xterm::-webkit-scrollbar-thumb:hover,
+[data-widget-type="terminal"] .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(140, 140, 140, 0.9) !important;
+}
+
+[data-widget-type="terminal"] .xterm::-webkit-scrollbar-track,
+[data-widget-type="terminal"] .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+/* Ensure xterm viewport has proper scrolling */
+.xterm-viewport {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+
+.xterm .xterm-viewport {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+
+/* Make sure terminal container allows scrolling */
+[data-widget-type="terminal"] .xterm {
+  overflow: visible !important;
+}
+
+[data-widget-type="terminal"] .xterm-viewport {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+
+/* Console widget scrollbar */
+[data-widget-type="console"] ::-webkit-scrollbar {
+  width: 6px;
+}
+
+[data-widget-type="console"] ::-webkit-scrollbar-thumb {
+  background: rgba(100, 100, 100, 0.7);
+  border-radius: 3px;
+}
+
+[data-widget-type="console"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 120, 120, 0.9);
+}
+
+/* Explorer widget scrollbar */
+[data-widget-type="explorer"] ::-webkit-scrollbar {
+  width: 6px;
+}
+
+[data-widget-type="explorer"] ::-webkit-scrollbar-thumb {
+  background: rgba(100, 100, 100, 0.7);
+  border-radius: 3px;
+}
+
+[data-widget-type="explorer"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 120, 120, 0.9);
+}
 
 /* Utility classes - dark theme */
 .text-success {

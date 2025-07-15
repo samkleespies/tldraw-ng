@@ -135,9 +135,10 @@ class ConsoleBroadcaster {
    */
   clear(): void {
     this.messageHistory = [];
+    // Broadcast a special clear event that widgets can listen to
     this.broadcast({
       level: 'info',
-      message: 'Console cleared',
+      message: '__CONSOLE_CLEAR__',
       source: 'system',
       category: 'system'
     });

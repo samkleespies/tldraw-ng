@@ -77,7 +77,11 @@ export const TerminalWidget: Component<TerminalWidgetProps> = (props) => {
         rightClickSelectsWord: true,
         fastScrollModifier: 'alt',
         fastScrollSensitivity: 5,
-        scrollSensitivity: 1
+        scrollSensitivity: 1,
+        // Ensure scrolling behavior keeps current line visible
+        scrollOnUserInput: true,
+        // Make sure the terminal scrolls to bottom when new content is added
+        scrollToBottom: true
       });
 
       // Add addons
@@ -149,6 +153,8 @@ export const TerminalWidget: Component<TerminalWidgetProps> = (props) => {
   const writePrompt = () => {
     if (terminal) {
       terminal.write('\x1b[1;36m➜\x1b[0m \x1b[1;34m~\x1b[0m $ ');
+      // Ensure the prompt is visible after writing it
+      scrollToBottom();
     }
   };
 
@@ -159,13 +165,14 @@ export const TerminalWidget: Component<TerminalWidgetProps> = (props) => {
     if (!terminal) return;
 
     const code = data.charCodeAt(0);
-    
+
     // Handle special characters
     if (code === 13) { // Enter
       terminal.writeln('');
       executeCommand(currentCommand.trim());
       currentCommand = '';
       writePrompt();
+      scrollToBottom();
     } else if (code === 127) { // Backspace
       if (currentCommand.length > 0) {
         currentCommand = currentCommand.slice(0, -1);
@@ -175,9 +182,11 @@ export const TerminalWidget: Component<TerminalWidgetProps> = (props) => {
       terminal.writeln('^C');
       currentCommand = '';
       writePrompt();
+      scrollToBottom();
     } else if (code === 12) { // Ctrl+L
       terminal.clear();
       writePrompt();
+      scrollToBottom();
     } else if (code >= 32) { // Printable characters
       currentCommand += data;
       terminal.write(data);
@@ -206,6 +215,22 @@ export const TerminalWidget: Component<TerminalWidgetProps> = (props) => {
   };
 
   /**
+   * Scroll terminal to bottom and ensure current line is visible
+   */
+  const scrollToBottom = () => {
+    if (terminal) {
+      // Scroll to the very bottom to ensure the current input line is visible
+      terminal.scrollToBottom();
+      // Also scroll to the end of the buffer to make sure we see the latest content
+      setTimeout(() => {
+        if (terminal) {
+          terminal.scrollToLine(terminal.buffer.active.length);
+        }
+      }, 10);
+    }
+  };
+
+  /**
    * Execute command in terminal
    */
   const executeCommand = (command: string) => {
@@ -221,7 +246,7 @@ export const TerminalWidget: Component<TerminalWidgetProps> = (props) => {
       case 'clear':
         terminal.clear();
         return;
-      
+
       case 'help':
         terminal.writeln('Available commands:');
         terminal.writeln('  clear    - Clear the terminal');
@@ -231,18 +256,22 @@ export const TerminalWidget: Component<TerminalWidgetProps> = (props) => {
         terminal.writeln('  pwd      - Show current directory');
         terminal.writeln('  ls       - List files (simulated)');
         terminal.writeln('');
+        scrollToBottom();
         return;
-      
+
       case 'date':
         terminal.writeln(new Date().toString());
+        scrollToBottom();
         return;
-      
+
       case 'pwd':
         terminal.writeln('/workspace');
+        scrollToBottom();
         return;
-      
+
       case 'ls':
         terminal.writeln('package.json  src/  public/  README.md');
+        scrollToBottom();
         return;
     }
 
@@ -250,6 +279,7 @@ export const TerminalWidget: Component<TerminalWidgetProps> = (props) => {
     if (command.startsWith('echo ')) {
       const text = command.substring(5);
       terminal.writeln(text);
+      scrollToBottom();
       return;
     }
 
@@ -258,12 +288,14 @@ export const TerminalWidget: Component<TerminalWidgetProps> = (props) => {
       terminal.writeln(`\x1b[33m⚠️ Package manager commands are simulated in this demo\x1b[0m`);
       terminal.writeln(`Command: ${command}`);
       terminal.writeln(`\x1b[32m✓ Command completed successfully\x1b[0m`);
+      scrollToBottom();
       return;
     }
 
     // Default: command not found
     terminal.writeln(`\x1b[31mCommand not found: ${command}\x1b[0m`);
     terminal.writeln(`Type 'help' for available commands.`);
+    scrollToBottom();
   };
 
   /**
@@ -354,11 +386,11 @@ export const TerminalWidget: Component<TerminalWidgetProps> = (props) => {
       </div>
 
       {/* Terminal Content */}
-      <div style="flex: 1; position: relative;">
+      <div style="flex: 1; position: relative; overflow: hidden;">
         {error() ? renderError() : !isLoaded() ? renderLoading() : null}
         <div
           ref={containerRef}
-          style={`width: 100%; height: 100%; ${!isLoaded() ? 'display: none;' : ''}`}
+          style={`width: 100%; height: 100%; overflow: auto; ${!isLoaded() ? 'display: none;' : ''}`}
         />
       </div>
     </div>
