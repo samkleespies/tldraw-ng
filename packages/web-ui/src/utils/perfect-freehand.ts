@@ -113,19 +113,19 @@ export function strokeToVertexObjects(
         position: [centroidX, centroidY],
         color,
         uv: [0.5, 0.5],
-        shape_type: 4.0 // Pre-triangulated shape type
+        shape_type: 0.0 // Use basic shape type for solid fill
       },
       {
         position: [p1[0], p1[1]],
         color,
         uv: [0.0, 0.0],
-        shape_type: 4.0
+        shape_type: 0.0
       },
       {
         position: [p2[0], p2[1]],
         color,
         uv: [1.0, 0.0],
-        shape_type: 4.0
+        shape_type: 0.0
       }
     );
   }

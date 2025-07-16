@@ -544,10 +544,10 @@ const App: Component = () => {
         break;
 
       case 'startDrawing':
-        // Start drawing using the existing Rust drawing system
+        // Start drawing using enhanced Rust drawing system
         if (!isCurrentlyDrawing) {
           isCurrentlyDrawing = true;
-          // Store screen coordinates with pressure for perfect-freehand
+          // Store screen coordinates
           currentDrawPoints = [{ x: msg.x, y: msg.y, pressure: 0.5 }];
           currentDrawShapeId = null;
           currentStrokeVertices = null;
@@ -560,24 +560,13 @@ const App: Component = () => {
 
       case 'addDrawPoint':
         if (isCurrentlyDrawing) {
-          // Add point with pressure for perfect-freehand
+          // Add point to drawing
           currentDrawPoints.push({ x: msg.x, y: msg.y, pressure: 0.5 });
           console.log('🎨 Added smooth point - Screen:', [msg.x, msg.y], 'Total points:', currentDrawPoints.length);
 
-          // Use the existing Rust drawing system for now to avoid borrow checker issues
-          if (currentDrawPoints.length >= 2) {
-            // Get the last two points
-            const p1 = currentDrawPoints[currentDrawPoints.length - 2];
-            const p2 = currentDrawPoints[currentDrawPoints.length - 1];
-
-            // Convert to world coordinates
-            const world1 = core.screen_to_world(p1.x, p1.y);
-            const world2 = core.screen_to_world(p2.x, p2.y);
-
-            // Add the point to the current drawing path in Rust
-            core.add_draw_point(p2.x, p2.y);
-            core.render_frame();
-          }
+          // Add the point to the current drawing path in Rust
+          core.add_draw_point(msg.x, msg.y);
+          core.render_frame();
         }
         break;
 

@@ -1324,9 +1324,9 @@ impl WhiteboardCore {
             position: initial_point, // Position is the first point
             shape_type: ShapeType::Draw {
                 points: self.current_draw_points.clone(),
-                stroke_width: 2.0,
+                stroke_width: 5.0, // Increased to 5.0 for slightly thicker lines
             },
-            color: [0.0, 1.0, 1.0, 1.0], // Bright cyan - very visible on dark background
+            color: [1.0, 1.0, 1.0, 1.0], // White color for better visibility
         };
 
         self.shapes.insert(id, shape);
@@ -3244,16 +3244,17 @@ impl WhiteboardCore {
             return;
         }
 
-        // Apply smoothing to the input points
+        // Apply more aggressive smoothing to the input points
         let smoothed_points = self.smooth_path(points);
 
         if smoothed_points.len() < 2 {
             return;
         }
 
-        let half_width = (stroke_width / 2.0) as f32;
+        // Ensure good stroke width for visibility
+        let half_width = (stroke_width.max(5.0) / 2.0) as f32;
 
-        // Create line segments with proper joins
+        // Create overlapping line segments with proper joins to eliminate gaps
         for i in 0..smoothed_points.len() - 1 {
             let p1 = smoothed_points[i];
             let p2 = smoothed_points[i + 1];
@@ -3263,7 +3264,7 @@ impl WhiteboardCore {
             let dy = p2.y - p1.y;
             let length = (dx * dx + dy * dy).sqrt();
 
-            if length > 0.0 {
+            if length > 0.5 { // Skip very short segments
                 // Normalize direction
                 let dir_x = dx / length;
                 let dir_y = dy / length;
@@ -3277,22 +3278,32 @@ impl WhiteboardCore {
                 let x2 = p2.x as f32;
                 let y2 = p2.y as f32;
 
-                // Create quad for this line segment with rounded caps
+                // Extend segments slightly to ensure overlap and eliminate gaps
+                let extend = half_width * 0.1; // Small extension
+                let ext_x = dir_x as f32 * extend;
+                let ext_y = dir_y as f32 * extend;
+
+                // Create quad for this line segment with slight extension
                 // First triangle
                 vertices.extend_from_slice(&[
-                    Vertex { position: [x1 + nx, y1 + ny], color, uv: [0.0, 0.0], shape_type: 0.0 },
-                    Vertex { position: [x1 - nx, y1 - ny], color, uv: [0.0, 1.0], shape_type: 0.0 },
-                    Vertex { position: [x2 + nx, y2 + ny], color, uv: [1.0, 0.0], shape_type: 0.0 },
+                    Vertex { position: [x1 + nx - ext_x, y1 + ny - ext_y], color, uv: [0.0, 0.0], shape_type: 0.0 },
+                    Vertex { position: [x1 - nx - ext_x, y1 - ny - ext_y], color, uv: [0.0, 1.0], shape_type: 0.0 },
+                    Vertex { position: [x2 + nx + ext_x, y2 + ny + ext_y], color, uv: [1.0, 0.0], shape_type: 0.0 },
                 ]);
 
                 // Second triangle
                 vertices.extend_from_slice(&[
-                    Vertex { position: [x1 - nx, y1 - ny], color, uv: [0.0, 1.0], shape_type: 0.0 },
-                    Vertex { position: [x2 - nx, y2 - ny], color, uv: [1.0, 1.0], shape_type: 0.0 },
-                    Vertex { position: [x2 + nx, y2 + ny], color, uv: [1.0, 0.0], shape_type: 0.0 },
+                    Vertex { position: [x1 - nx - ext_x, y1 - ny - ext_y], color, uv: [0.0, 1.0], shape_type: 0.0 },
+                    Vertex { position: [x2 - nx + ext_x, y2 - ny + ext_y], color, uv: [1.0, 1.0], shape_type: 0.0 },
+                    Vertex { position: [x2 + nx + ext_x, y2 + ny + ext_y], color, uv: [1.0, 0.0], shape_type: 0.0 },
                 ]);
 
-                // Add rounded caps at the ends for smoother appearance
+                // Add line joins at connection points to eliminate gaps
+                if i > 0 {
+                    self.tessellate_line_join(vertices, smoothed_points[i-1], p1, p2, half_width, color);
+                }
+
+                // Add rounded caps at the ends
                 if i == 0 {
                     self.tessellate_round_cap(vertices, p1, nx, ny, color);
                 }
@@ -3364,6 +3375,40 @@ impl WhiteboardCore {
                 Vertex { position: [x1, y1], color, uv: [0.0, 0.0], shape_type: 0.0 },
                 Vertex { position: [x2, y2], color, uv: [1.0, 0.0], shape_type: 0.0 },
             ]);
+        }
+    }
+
+    fn tessellate_line_join(&self, vertices: &mut Vec<Vertex>, p0: Point, p1: Point, p2: Point, half_width: f32, color: [f32; 4]) {
+        // Create a smooth join between two line segments to eliminate gaps
+        let dx1 = p1.x - p0.x;
+        let dy1 = p1.y - p0.y;
+        let len1 = (dx1 * dx1 + dy1 * dy1).sqrt();
+
+        let dx2 = p2.x - p1.x;
+        let dy2 = p2.y - p1.y;
+        let len2 = (dx2 * dx2 + dy2 * dy2).sqrt();
+
+        if len1 > 0.0 && len2 > 0.0 {
+            let cx = p1.x as f32;
+            let cy = p1.y as f32;
+
+            // Create a small circular join to fill any gaps
+            let segments = 4;
+            for i in 0..segments {
+                let angle1 = (i as f32 / segments as f32) * std::f32::consts::PI * 2.0;
+                let angle2 = ((i + 1) as f32 / segments as f32) * std::f32::consts::PI * 2.0;
+
+                let x1 = cx + half_width * 0.8 * angle1.cos();
+                let y1 = cy + half_width * 0.8 * angle1.sin();
+                let x2 = cx + half_width * 0.8 * angle2.cos();
+                let y2 = cy + half_width * 0.8 * angle2.sin();
+
+                vertices.extend_from_slice(&[
+                    Vertex { position: [cx, cy], color, uv: [0.5, 0.5], shape_type: 0.0 },
+                    Vertex { position: [x1, y1], color, uv: [0.0, 0.0], shape_type: 0.0 },
+                    Vertex { position: [x2, y2], color, uv: [1.0, 0.0], shape_type: 0.0 },
+                ]);
+            }
         }
     }
 
