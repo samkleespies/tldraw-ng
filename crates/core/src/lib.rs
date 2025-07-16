@@ -1303,11 +1303,12 @@ impl WhiteboardCore {
         // Save state before operation
         self.save_state();
 
-        // Convert screen coordinates to world coordinates
+        // Coordinates are already canvas-relative from getBoundingClientRect()
+        // Convert to world coordinates using proper camera transformation
         let world_x = (x / self.camera_scale as f64) + self.camera_translation[0] as f64;
         let world_y = (y / self.camera_scale as f64) + self.camera_translation[1] as f64;
 
-        web_sys::console::log_1(&format!("🎨 Starting drawing at screen ({}, {}) -> world ({}, {})", x, y, world_x, world_y).into());
+
 
         let id = ShapeId(self.next_id);
         self.next_id += 1;
@@ -1318,10 +1319,17 @@ impl WhiteboardCore {
         self.current_draw_id = Some(id);
         self.is_drawing = true;
 
+        // Calculate bounding box center for position
+        let bbox = self.get_draw_bounding_box(&self.current_draw_points);
+        let center_position = Point {
+            x: (bbox.min_x + bbox.max_x) / 2.0,
+            y: (bbox.min_y + bbox.max_y) / 2.0,
+        };
+
         // Create the initial draw shape
         let shape = Shape {
             id,
-            position: initial_point, // Position is the first point
+            position: center_position, // Position is the center of the bounding box
             shape_type: ShapeType::Draw {
                 points: self.current_draw_points.clone(),
                 stroke_width: 5.0, // Increased to 5.0 for slightly thicker lines
@@ -1340,7 +1348,8 @@ impl WhiteboardCore {
             return;
         }
 
-        // Convert screen coordinates to world coordinates
+        // Coordinates are already canvas-relative from getBoundingClientRect()
+        // Convert to world coordinates using proper camera transformation
         let world_x = (x / self.camera_scale as f64) + self.camera_translation[0] as f64;
         let world_y = (y / self.camera_scale as f64) + self.camera_translation[1] as f64;
 
@@ -1530,13 +1539,16 @@ impl WhiteboardCore {
 
         web_sys::console::log_1(&format!("Rust: Successfully parsed {} vertices, {} positions", vertices.len(), positions.len()).into());
 
-        // Calculate bounding box for position
-        let min_x = positions.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-        let min_y = positions.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        // Calculate bounding box center for position
+        let bbox = self.get_draw_bounding_box(&positions);
+        let center_position = Point {
+            x: (bbox.min_x + bbox.max_x) / 2.0,
+            y: (bbox.min_y + bbox.max_y) / 2.0,
+        };
 
         let shape = Shape {
             id,
-            position: Point { x: min_x, y: min_y },
+            position: center_position, // Position is the center of the bounding box
             shape_type: ShapeType::DrawPreTriangulated {
                 vertices,
                 bounding_points: positions,
@@ -2133,8 +2145,33 @@ impl WhiteboardCore {
                 // Dragging regular shapes - update positions of all selected shapes
                 for &selected_id in &self.selected_shapes {
                     if let (Some(shape), Some(offset)) = (self.shapes.get_mut(&selected_id), self.drag_offset.get(&selected_id)) {
-                        shape.position.x = world_x + offset.x;
-                        shape.position.y = world_y + offset.y;
+                        let new_x = world_x + offset.x;
+                        let new_y = world_y + offset.y;
+                        let delta_x = new_x - shape.position.x;
+                        let delta_y = new_y - shape.position.y;
+
+                        // Update position
+                        shape.position.x = new_x;
+                        shape.position.y = new_y;
+
+                        // For draw shapes, also translate all the points
+                        match &mut shape.shape_type {
+                            ShapeType::Draw { points, .. } => {
+                                for point in points {
+                                    point.x += delta_x;
+                                    point.y += delta_y;
+                                }
+                            }
+                            ShapeType::DrawPreTriangulated { bounding_points, .. } => {
+                                for point in bounding_points {
+                                    point.x += delta_x;
+                                    point.y += delta_y;
+                                }
+                            }
+                            _ => {
+                                // Other shapes just need position update (already done above)
+                            }
+                        }
                     }
                 }
             }
@@ -2223,13 +2260,24 @@ impl WhiteboardCore {
                 ResizeHandle::Right => "e",
             };
 
-            // Convert world coordinates to screen coordinates
+            // Convert world coordinates to screen coordinates (accounting for device pixel ratio)
             let screen_x = (handle.position.x - self.camera_translation[0] as f64) * self.camera_scale as f64;
             let screen_y = (handle.position.y - self.camera_translation[1] as f64) * self.camera_scale as f64;
 
+            // Get device pixel ratio from window (default to 1.0 if not available)
+            let device_pixel_ratio = web_sys::window()
+                .map(|w| w.device_pixel_ratio())
+                .unwrap_or(1.0);
+
+            // Adjust for device pixel ratio to match the canvas coordinate system
+            let adjusted_screen_x = screen_x / device_pixel_ratio;
+            let adjusted_screen_y = screen_y / device_pixel_ratio;
+
+
+
             js_sys::Reflect::set(&js_handle, &"type".into(), &handle_type_str.into()).unwrap();
-            js_sys::Reflect::set(&js_handle, &"x".into(), &screen_x.into()).unwrap();
-            js_sys::Reflect::set(&js_handle, &"y".into(), &screen_y.into()).unwrap();
+            js_sys::Reflect::set(&js_handle, &"x".into(), &adjusted_screen_x.into()).unwrap();
+            js_sys::Reflect::set(&js_handle, &"y".into(), &adjusted_screen_y.into()).unwrap();
             js_sys::Reflect::set(&js_handle, &"size".into(), &handle.size.into()).unwrap();
 
             js_array.push(&js_handle);
@@ -2501,18 +2549,18 @@ impl WhiteboardCore {
             ShapeType::Widget { .. } => {
                 // Don't render selection outline for widgets - keep them completely clean
             }
-            ShapeType::Draw { points, .. } => {
-                // Render selection outline for draw paths using the bounding box
-                let bbox = self.get_draw_bounding_box(points);
+            ShapeType::Draw { .. } => {
+                // Render selection outline for draw paths using the same bounding box as resize handles
+                let bbox = shape.bounding_box();
                 self.tessellate_rectangle_outline(&mut *vertices,
                     Point { x: bbox.min_x, y: bbox.min_y },
                     bbox.max_x - bbox.min_x,
                     bbox.max_y - bbox.min_y,
                     outline_color, outline_width);
             }
-            ShapeType::DrawPreTriangulated { bounding_points, .. } => {
-                // Render selection outline for pre-triangulated draw paths using the bounding box
-                let bbox = self.get_draw_bounding_box(bounding_points);
+            ShapeType::DrawPreTriangulated { .. } => {
+                // Render selection outline for pre-triangulated draw paths using the same bounding box as resize handles
+                let bbox = shape.bounding_box();
                 self.tessellate_rectangle_outline(&mut *vertices,
                     Point { x: bbox.min_x, y: bbox.min_y },
                     bbox.max_x - bbox.min_x,

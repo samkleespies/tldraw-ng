@@ -6,77 +6,84 @@ import ShapeToolsDropdown from './components/ShapeToolsDropdown';
 // Import Monaco configuration early to prevent worker issues
 import './utils/monaco-config';
 // Canvas asset management is now handled through AI context
-import { createSmoothStroke, getTrianglesFromStroke, getSvgPathFromStroke, strokeToVertexObjects, type DrawPoint } from './utils/perfect-freehand';
-import { getStroke } from 'perfect-freehand';
+// Legacy imports - kept for potential future use
+// import { createSmoothStroke, getTrianglesFromStroke, getSvgPathFromStroke, strokeToVertexObjects, type DrawPoint } from './utils/perfect-freehand';
+// import { getStroke } from 'perfect-freehand';
 
-// Drawing utilities
-interface Point {
+interface DrawPoint {
   x: number;
   y: number;
+  pressure: number;
 }
 
-interface Vertex {
-  position: [number, number];
-  color: [number, number, number, number];
-  uv: [number, number];
-  shape_type: number;
-}
+// Legacy interfaces - kept for potential future use
+// interface Point {
+//   x: number;
+//   y: number;
+// }
+//
+// interface Vertex {
+//   position: [number, number];
+//   color: [number, number, number, number];
+//   uv: [number, number];
+//   shape_type: number;
+// }
 
-// Create a simple line from points using basic triangulation
-function createSimpleLine(points: Point[], strokeWidth: number, color: [number, number, number, number]): Vertex[] {
-  if (points.length < 2) return [];
-
-  const vertices: Vertex[] = [];
-  const halfWidth = strokeWidth / 2;
-
-  for (let i = 0; i < points.length - 1; i++) {
-    const p1 = points[i];
-    const p2 = points[i + 1];
-
-    // Calculate direction vector
-    const dx = p2.x - p1.x;
-    const dy = p2.y - p1.y;
-    const length = Math.sqrt(dx * dx + dy * dy);
-
-    if (length === 0) continue;
-
-    // Calculate perpendicular vector (normalized)
-    const perpX = (-dy / length) * halfWidth;
-    const perpY = (dx / length) * halfWidth;
-
-    // Create quad vertices for this line segment
-    const v1: Vertex = {
-      position: [p1.x + perpX, p1.y + perpY],
-      color,
-      uv: [0, 0],
-      shape_type: 0 // World coordinates with camera transformation
-    };
-    const v2: Vertex = {
-      position: [p1.x - perpX, p1.y - perpY],
-      color,
-      uv: [0, 1],
-      shape_type: 0
-    };
-    const v3: Vertex = {
-      position: [p2.x + perpX, p2.y + perpY],
-      color,
-      uv: [1, 0],
-      shape_type: 0
-    };
-    const v4: Vertex = {
-      position: [p2.x - perpX, p2.y - perpY],
-      color,
-      uv: [1, 1],
-      shape_type: 0
-    };
-
-    // Add two triangles to form a quad
-    vertices.push(v1, v2, v3); // First triangle
-    vertices.push(v2, v4, v3); // Second triangle
-  }
-
-  return vertices;
-}
+// Legacy function - kept for potential future use
+// function createSimpleLine(points: Point[], strokeWidth: number, color: [number, number, number, number]): Vertex[] {
+//   if (points.length < 2) return [];
+//
+//   const vertices: Vertex[] = [];
+//   const halfWidth = strokeWidth / 2;
+//
+//   for (let i = 0; i < points.length - 1; i++) {
+//     const p1 = points[i];
+//     const p2 = points[i + 1];
+//
+//     // Calculate direction vector
+//     const dx = p2.x - p1.x;
+//     const dy = p2.y - p1.y;
+//     const length = Math.sqrt(dx * dx + dy * dy);
+//
+//     if (length === 0) continue;
+//
+//     // Calculate perpendicular vector (normalized)
+//     const perpX = (-dy / length) * halfWidth;
+//     const perpY = (dx / length) * halfWidth;
+//
+//     // Create quad vertices for this line segment
+//     const v1: Vertex = {
+//       position: [p1.x + perpX, p1.y + perpY],
+//       color,
+//       uv: [0, 0],
+//       shape_type: 0 // World coordinates with camera transformation
+//     };
+//     const v2: Vertex = {
+//       position: [p1.x - perpX, p1.y - perpY],
+//       color,
+//       uv: [0, 1],
+//       shape_type: 0
+//     };
+//     const v3: Vertex = {
+//       position: [p2.x + perpX, p2.y + perpY],
+//       color,
+//       uv: [1, 0],
+//       shape_type: 0
+//     };
+//     const v4: Vertex = {
+//       position: [p2.x - perpX, p2.y - perpY],
+//       color,
+//       uv: [1, 1],
+//       shape_type: 0
+//     };
+//
+//     // Add two triangles to form a quad
+//     vertices.push(v1, v2, v3); // First triangle
+//     vertices.push(v2, v4, v3); // Second triangle
+//   }
+//
+//   return vertices;
+// }
 
 
 
@@ -135,8 +142,6 @@ const App: Component = () => {
   // Drawing state for perfect-freehand
   let currentDrawPoints: DrawPoint[] = [];
   let isCurrentlyDrawing = false;
-  let currentDrawShapeId: number | null = null;
-  let currentStrokeVertices: Float32Array | null = null;
 
   // Animation frame for smooth drawing
   let drawingAnimationFrame: number | null = null;
@@ -582,8 +587,7 @@ const App: Component = () => {
           isCurrentlyDrawing = true;
           // Store screen coordinates
           currentDrawPoints = [{ x: msg.x, y: msg.y, pressure: 0.5 }];
-          currentDrawShapeId = null;
-          currentStrokeVertices = null;
+          // Legacy variables removed - drawing now handled by Rust core
 
           // Start drawing in Rust core
           core.start_drawing(msg.x, msg.y);
@@ -617,8 +621,7 @@ const App: Component = () => {
         // Reset drawing state
         isCurrentlyDrawing = false;
         currentDrawPoints = [];
-        currentDrawShapeId = null;
-        currentStrokeVertices = null;
+        // Legacy variables removed - drawing now handled by Rust core
 
         // Stop the drawing animation loop
         stopDrawingLoop();
@@ -867,8 +870,11 @@ const App: Component = () => {
     if (!isInitialized()) return;
 
     const rect = canvasRef!.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const devicePixelRatio = window.devicePixelRatio || 1;
+
+    // Calculate coordinates relative to canvas, accounting for device pixel ratio
+    const x = (e.clientX - rect.left) * devicePixelRatio;
+    const y = (e.clientY - rect.top) * devicePixelRatio;
 
     if (e.button === 1) { // Middle mouse button
       isMiddleMouseDown = true;
@@ -906,8 +912,13 @@ const App: Component = () => {
     if (!isInitialized()) return;
 
     const rect = canvasRef!.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const devicePixelRatio = window.devicePixelRatio || 1;
+
+    // Calculate coordinates relative to canvas, accounting for device pixel ratio
+    const x = (e.clientX - rect.left) * devicePixelRatio;
+    const y = (e.clientY - rect.top) * devicePixelRatio;
+
+
 
     if (isMiddleMouseDown) {
       sendToCore({
@@ -949,8 +960,11 @@ const App: Component = () => {
     }
 
     const rect = canvasRef!.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const devicePixelRatio = window.devicePixelRatio || 1;
+
+    // Calculate coordinates relative to canvas, accounting for device pixel ratio
+    const x = (e.clientX - rect.left) * devicePixelRatio;
+    const y = (e.clientY - rect.top) * devicePixelRatio;
 
     // Handle draw tool
     if (selectedTool() === 'draw') {
