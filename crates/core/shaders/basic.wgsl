@@ -23,7 +23,7 @@ struct VertexInput {
     @location(0) position: vec2<f32>,
     @location(1) color: vec4<f32>,
     @location(2) uv: vec2<f32>,
-    @location(3) shape_type: f32, // 0=rect, 1=ellipse, 2=line, 3=image
+    @location(3) shape_type: f32, // 0=rect, 1=ellipse, 2=line, 3=image, 4=pre-triangulated
 }
 
 // Vertex output structure
@@ -39,18 +39,26 @@ struct VertexOutput {
 @vertex
 fn vs_main(vertex: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    
-    // Apply camera translation and zoom before converting to clip space
-    let world_pos = (vertex.position - uniforms.camera.xy) * uniforms.camera.z;
-    let normalized_pos = (world_pos / uniforms.viewport.xy) * 2.0 - 1.0;
-    let clip_pos = vec4<f32>(normalized_pos.x, -normalized_pos.y, 0.0, 1.0);
-    
-    out.clip_position = uniforms.view_proj * clip_pos;
+
+    // Handle pre-triangulated vertices (shape_type 4.0) differently
+    if (vertex.shape_type >= 3.5) {
+        // Pre-triangulated vertices: use screen coordinates directly
+        let normalized_pos = (vertex.position / uniforms.viewport.xy) * 2.0 - 1.0;
+        let clip_pos = vec4<f32>(normalized_pos.x, -normalized_pos.y, 0.0, 1.0);
+        out.clip_position = uniforms.view_proj * clip_pos;
+    } else {
+        // Regular shapes: apply camera translation and zoom
+        let world_pos = (vertex.position - uniforms.camera.xy) * uniforms.camera.z;
+        let normalized_pos = (world_pos / uniforms.viewport.xy) * 2.0 - 1.0;
+        let clip_pos = vec4<f32>(normalized_pos.x, -normalized_pos.y, 0.0, 1.0);
+        out.clip_position = uniforms.view_proj * clip_pos;
+    }
+
     out.color = vertex.color;
     out.uv = vertex.uv;
     out.shape_type = vertex.shape_type;
     out.world_pos = vertex.position;
-    
+
     return out;
 }
 
@@ -77,13 +85,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     } else if (in.shape_type < 2.5) {
         // Line (shape_type = 2.0)
         final_color = in.color;
-    } else {
-        // Image (shape_type = 3.0 and above)
+    } else if (in.shape_type < 3.5) {
+        // Image (shape_type = 3.0)
         // Use the sampled texture color with base color tinting
         final_color = vec4<f32>(
             texture_color.rgb * in.color.rgb,
             texture_color.a * in.color.a
         );
+    } else {
+        // Pre-triangulated (shape_type = 4.0)
+        final_color = in.color;
     }
 
     return final_color;

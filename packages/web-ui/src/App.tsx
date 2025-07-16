@@ -6,6 +6,79 @@ import ShapeToolsDropdown from './components/ShapeToolsDropdown';
 // Import Monaco configuration early to prevent worker issues
 import './utils/monaco-config';
 // Canvas asset management is now handled through AI context
+import { createSmoothStroke, getTrianglesFromStroke, getSvgPathFromStroke, strokeToVertexObjects, type DrawPoint } from './utils/perfect-freehand';
+import { getStroke } from 'perfect-freehand';
+
+// Drawing utilities
+interface Point {
+  x: number;
+  y: number;
+}
+
+interface Vertex {
+  position: [number, number];
+  color: [number, number, number, number];
+  uv: [number, number];
+  shape_type: number;
+}
+
+// Create a simple line from points using basic triangulation
+function createSimpleLine(points: Point[], strokeWidth: number, color: [number, number, number, number]): Vertex[] {
+  if (points.length < 2) return [];
+
+  const vertices: Vertex[] = [];
+  const halfWidth = strokeWidth / 2;
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const p1 = points[i];
+    const p2 = points[i + 1];
+
+    // Calculate direction vector
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const length = Math.sqrt(dx * dx + dy * dy);
+
+    if (length === 0) continue;
+
+    // Calculate perpendicular vector (normalized)
+    const perpX = (-dy / length) * halfWidth;
+    const perpY = (dx / length) * halfWidth;
+
+    // Create quad vertices for this line segment
+    const v1: Vertex = {
+      position: [p1.x + perpX, p1.y + perpY],
+      color,
+      uv: [0, 0],
+      shape_type: 0 // World coordinates with camera transformation
+    };
+    const v2: Vertex = {
+      position: [p1.x - perpX, p1.y - perpY],
+      color,
+      uv: [0, 1],
+      shape_type: 0
+    };
+    const v3: Vertex = {
+      position: [p2.x + perpX, p2.y + perpY],
+      color,
+      uv: [1, 0],
+      shape_type: 0
+    };
+    const v4: Vertex = {
+      position: [p2.x - perpX, p2.y - perpY],
+      color,
+      uv: [1, 1],
+      shape_type: 0
+    };
+
+    // Add two triangles to form a quad
+    vertices.push(v1, v2, v3); // First triangle
+    vertices.push(v2, v4, v3); // Second triangle
+  }
+
+  return vertices;
+}
+
+
 
 // Message types for worker communication
 type MsgFromUI =
@@ -24,7 +97,11 @@ type MsgFromUI =
   | { type: 'finishShapeCreation' }
   | { type: 'cancelShapeCreation' }
   | { type: 'createShape'; tool: 'rectangle' | 'ellipse'; x: number; y: number; width?: number; height?: number }
-  | { type: 'panCamera'; dx: number; dy: number };
+  | { type: 'panCamera'; dx: number; dy: number }
+  | { type: 'startDrawing'; x: number; y: number }
+  | { type: 'addDrawPoint'; x: number; y: number }
+  | { type: 'finishDrawing' }
+  | { type: 'createSmoothDrawShape'; points: Array<{x: number, y: number}> };
 
 // Legacy type - kept for potential future worker implementation
 // type MsgFromWorker =
@@ -33,7 +110,7 @@ type MsgFromUI =
 //   | { type: 'shapeCountChanged'; count: number }
 //   | { type: 'error'; message: string };
 
-type Tool = 'select' | 'rectangle' | 'ellipse' | 'monaco' | 'terminal' | 'preview' | 'chat' | 'explorer' | 'console';
+type Tool = 'select' | 'rectangle' | 'ellipse' | 'draw' | 'monaco' | 'terminal' | 'preview' | 'chat' | 'explorer' | 'console';
 
 const App: Component = () => {
   // State signals
@@ -54,6 +131,12 @@ const App: Component = () => {
   let isMiddleMouseDown = false;
   let shapeCreationStartPos = { x: 0, y: 0 };
   let isWaitingForShapeCreation = false;
+
+  // Drawing state for perfect-freehand
+  let currentDrawPoints: DrawPoint[] = [];
+  let isCurrentlyDrawing = false;
+  let currentDrawShapeId: number | null = null;
+  let currentStrokeVertices: Float32Array | null = null;
 
   onMount(() => {
     initializeWorker();
@@ -459,6 +542,60 @@ const App: Component = () => {
         core.pan_camera(msg.dx, msg.dy);
         core.render_frame();
         break;
+
+      case 'startDrawing':
+        // Start drawing using the existing Rust drawing system
+        if (!isCurrentlyDrawing) {
+          isCurrentlyDrawing = true;
+          // Store screen coordinates with pressure for perfect-freehand
+          currentDrawPoints = [{ x: msg.x, y: msg.y, pressure: 0.5 }];
+          currentDrawShapeId = null;
+          currentStrokeVertices = null;
+
+          // Start drawing in Rust core
+          core.start_drawing(msg.x, msg.y);
+          console.log('🎨 Started smooth drawing at screen coords:', [msg.x, msg.y]);
+        }
+        break;
+
+      case 'addDrawPoint':
+        if (isCurrentlyDrawing) {
+          // Add point with pressure for perfect-freehand
+          currentDrawPoints.push({ x: msg.x, y: msg.y, pressure: 0.5 });
+          console.log('🎨 Added smooth point - Screen:', [msg.x, msg.y], 'Total points:', currentDrawPoints.length);
+
+          // Use the existing Rust drawing system for now to avoid borrow checker issues
+          if (currentDrawPoints.length >= 2) {
+            // Get the last two points
+            const p1 = currentDrawPoints[currentDrawPoints.length - 2];
+            const p2 = currentDrawPoints[currentDrawPoints.length - 1];
+
+            // Convert to world coordinates
+            const world1 = core.screen_to_world(p1.x, p1.y);
+            const world2 = core.screen_to_world(p2.x, p2.y);
+
+            // Add the point to the current drawing path in Rust
+            core.add_draw_point(p2.x, p2.y);
+            core.render_frame();
+          }
+        }
+        break;
+
+      case 'finishDrawing':
+        if (isCurrentlyDrawing) {
+          // Finish drawing in Rust core
+          core.finish_drawing();
+          setShapeCount(core.shape_count());
+          console.log('🎨 Finished drawing with', currentDrawPoints.length, 'points');
+        }
+
+        // Reset drawing state
+        isCurrentlyDrawing = false;
+        currentDrawPoints = [];
+        currentDrawShapeId = null;
+        currentStrokeVertices = null;
+        core.render_frame();
+        break;
     }
   };
 
@@ -710,6 +847,16 @@ const App: Component = () => {
       return;
     }
 
+    // Handle draw tool
+    if (selectedTool() === 'draw') {
+      sendToCore({
+        type: 'startDrawing',
+        x,
+        y
+      });
+      return;
+    }
+
     // Store creation start info for shape tools
     if (selectedTool() !== 'select') {
       shapeCreationStartPos = { x, y };
@@ -741,6 +888,16 @@ const App: Component = () => {
       return;
     }
 
+    // Handle drawing
+    if (selectedTool() === 'draw' && e.buttons === 1) { // Left mouse button pressed
+      sendToCore({
+        type: 'addDrawPoint',
+        x,
+        y
+      });
+      return;
+    }
+
     // No need for drag distance calculation - we handle it in the message processing
 
     sendToCore({
@@ -764,6 +921,14 @@ const App: Component = () => {
     const rect = canvasRef!.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+
+    // Handle draw tool
+    if (selectedTool() === 'draw') {
+      sendToCore({
+        type: 'finishDrawing'
+      });
+      return;
+    }
 
     sendToCore({
       type: 'pointerUp',
@@ -995,6 +1160,9 @@ const App: Component = () => {
       case 'o':
         setSelectedTool('ellipse');
         break;
+      case 'd':
+        setSelectedTool('draw');
+        break;
       case 'm':
         setSelectedTool('monaco');
         break;
@@ -1097,6 +1265,23 @@ const App: Component = () => {
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
             <path d="M14.082 2.182a.5.5 0 0 1 .103.557L8.528 15.467a.5.5 0 0 1-.917-.007L5.57 10.694.803 8.652a.5.5 0 0 1-.006-.916l12.728-5.657a.5.5 0 0 1 .556.103z"/>
+          </svg>
+        </button>
+
+        <div class="tool-separator" />
+
+        {/* Draw Tool */}
+        <button
+          class={`tool-btn ${selectedTool() === 'draw' ? 'active' : ''}`}
+          onClick={() => handleToolChange('draw')}
+          disabled={!isInitialized()}
+          title="Draw (D)"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 19l7-7 3 3-7 7-3-3z"/>
+            <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
+            <path d="M2 2l7.586 7.586"/>
+            <circle cx="11" cy="11" r="2"/>
           </svg>
         </button>
 

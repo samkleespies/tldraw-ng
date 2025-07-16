@@ -90,13 +90,27 @@ body {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 6px;
+  padding: 6px !important;
   background: #2d2d2d;
-  border: 1px solid #404040;
+  border: 1px solid #404040 !important;
   border-radius: 10px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
   z-index: 100;
   animation: slideUp 0.4s ease-out;
+  min-height: 48px !important;
+  height: 48px !important;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  contain: layout;
+}
+
+.toolbar:focus-within {
+  border: 1px solid #404040 !important;
+}
+
+.toolbar:focus {
+  border: 1px solid #404040 !important;
+  outline: none !important;
 }
 
 @keyframes slideUp {
@@ -133,6 +147,9 @@ body {
   cursor: pointer;
   transition: all 0.15s ease;
   position: relative;
+  outline: none;
+  box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 .tool-btn:hover {
@@ -147,6 +164,27 @@ body {
 .tool-btn:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+.tool-btn:focus {
+  outline: none !important;
+  border: none !important;
+  width: 36px !important;
+  height: 36px !important;
+}
+
+.tool-btn:focus-visible {
+  outline: none !important;
+  border: none !important;
+  width: 36px !important;
+  height: 36px !important;
+}
+
+.tool-btn:active {
+  outline: none !important;
+  border: none !important;
+  width: 36px !important;
+  height: 36px !important;
 }
 
 /* SVG icons in tool buttons */
@@ -173,29 +211,79 @@ body {
   position: relative;
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .shape-tools-main {
   display: flex;
   align-items: center;
   gap: 0;
+  background: transparent;
+  border-radius: 6px;
+  overflow: hidden;
+  transition: all 0.15s ease;
+  width: 56px;
+  height: 36px;
+}
+
+.shape-tools-main:hover {
+  background: #404040;
 }
 
 .shape-tools-main .tool-btn {
-  border-radius: 6px 0 0 6px;
+  border-radius: 0;
+  background: transparent !important;
+  position: relative;
+  flex: 1;
+  min-width: 28px;
+}
+
+.shape-tools-main .tool-btn:hover {
+  background: transparent !important;
+}
+
+.shape-tools-main .tool-btn.active {
+  background: transparent !important;
+}
+
+.shape-tools-main.active {
+  background: linear-gradient(135deg, #5865f2 0%, #4752c4 100%);
+  box-shadow: 0 2px 8px rgba(88, 101, 242, 0.3);
 }
 
 .shape-tools-main .caret-btn {
-  width: 20px;
-  border-radius: 0 6px 6px 0;
-  border-left: 1px solid #505050;
+  width: 16px;
+  border-radius: 0;
+  background: transparent !important;
+  border: none;
   padding: 0;
+  position: relative;
+}
+
+.shape-tools-main .caret-btn:hover {
+  background: transparent !important;
+}
+
+.shape-tools-main .caret-btn::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1px;
+  height: 12px;
+  background: rgba(255, 255, 255, 0.15);
 }
 
 .shape-tools-main .caret-btn svg {
-  width: 8px;
-  height: 8px;
-  transition: transform 0.15s ease;
+  width: 12px;
+  height: 12px;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  opacity: 0.6;
+}
+
+.shape-tools-main:hover .caret-btn svg {
+  opacity: 0.8;
 }
 
 .shape-tools-main .caret-btn.open svg {
@@ -205,32 +293,38 @@ body {
 .shape-tools-menu {
   position: absolute;
   bottom: 50px;
-  left: 0;
+  left: 50%;
+  transform: translateX(-50%);
   background: #2d2d2d;
   border: 1px solid #404040;
-  border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-  padding: 8px;
+  border-radius: 10px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
+  padding: 10px;
   z-index: 1000;
   animation: dropdownSlideUp 0.2s ease-out;
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+  white-space: nowrap;
+  will-change: transform, opacity;
 }
 
 @keyframes dropdownSlideUp {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateX(-50%) translateY(10px);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateX(-50%) translateY(0);
   }
 }
 
 .shape-tools-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 4px;
-  width: 160px;
+  gap: 6px;
+  width: 168px;
+  grid-template-rows: repeat(2, 36px);
 }
 
 .shape-tool-item {
@@ -240,20 +334,24 @@ body {
   width: 36px;
   height: 36px;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: #ffffff;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  flex-shrink: 0;
 }
 
 .shape-tool-item:hover:not(.disabled) {
   background: #404040;
+  transform: scale(1.05);
 }
 
 .shape-tool-item.active {
   background: #5865f2;
   color: white;
+  transform: scale(1.02);
 }
 
 .shape-tool-item.disabled {
@@ -264,6 +362,13 @@ body {
 .shape-tool-item svg {
   width: 20px;
   height: 20px;
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+  display: block;
+}
+
+.shape-tool-item:hover:not(.disabled) svg {
+  transform: scale(1.1);
 }
 
 /* Status indicator - top left corner dark theme */
@@ -401,6 +506,13 @@ div[data-widget-type],
   outline: none !important;
   border: none !important;
   box-shadow: none !important;
+}
+
+/* Exception: Keep toolbar border intact */
+.toolbar,
+.toolbar:focus,
+.toolbar:focus-within {
+  border: 1px solid #404040 !important;
 }
 
 /* Specifically target divs that might be getting focus */

@@ -508,6 +508,8 @@ export default defineConfig({
     }
   });
 
+
+
   // React to language changes with mock worker support
   createEffect(() => {
     if (editor && isLoaded()) {

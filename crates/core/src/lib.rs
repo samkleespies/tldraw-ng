@@ -50,6 +50,11 @@ pub enum ShapeType {
     Ellipse { width: f64, height: f64 },
     Image { width: f64, height: f64, data_url: String, original_width: f64, original_height: f64 },
     Widget { widget_type: WidgetType, width: f64, height: f64, active: bool },
+    Draw { points: Vec<Point>, stroke_width: f64 },
+    DrawPreTriangulated {
+        vertices: Vec<Vertex>,
+        bounding_points: Vec<Point>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,6 +220,13 @@ fn apply_resize(shape: &mut Shape, resize_data: ResizeData) {
                 *height = new_height;
             }
         }
+        ShapeType::Draw { .. } => {
+            // Draw shapes don't support traditional resizing
+            // They could be scaled, but that's more complex
+        }
+        ShapeType::DrawPreTriangulated { .. } => {
+            // Pre-triangulated draw shapes don't support traditional resizing
+        }
     }
 }
 
@@ -245,6 +257,51 @@ impl Shape {
             }
             ShapeType::Widget { width, height, .. } => {
                 BoundingBox::new(x, y, x + width, y + height)
+            }
+            ShapeType::Draw { points, stroke_width } => {
+                if points.is_empty() {
+                    return BoundingBox::new(x, y, x, y);
+                }
+
+                let mut min_x = points[0].x;
+                let mut min_y = points[0].y;
+                let mut max_x = points[0].x;
+                let mut max_y = points[0].y;
+
+                for point in points {
+                    min_x = min_x.min(point.x);
+                    min_y = min_y.min(point.y);
+                    max_x = max_x.max(point.x);
+                    max_y = max_y.max(point.y);
+                }
+
+                // Add stroke width padding
+                let padding = stroke_width / 2.0;
+                BoundingBox::new(
+                    min_x - padding,
+                    min_y - padding,
+                    max_x + padding,
+                    max_y + padding
+                )
+            }
+            ShapeType::DrawPreTriangulated { bounding_points, .. } => {
+                if bounding_points.is_empty() {
+                    return BoundingBox::new(x, y, x, y);
+                }
+
+                let mut min_x = bounding_points[0].x;
+                let mut min_y = bounding_points[0].y;
+                let mut max_x = bounding_points[0].x;
+                let mut max_y = bounding_points[0].y;
+
+                for point in bounding_points {
+                    min_x = min_x.min(point.x);
+                    min_y = min_y.min(point.y);
+                    max_x = max_x.max(point.x);
+                    max_y = max_y.max(point.y);
+                }
+
+                BoundingBox::new(min_x, min_y, max_x, max_y)
             }
         }
     }
@@ -281,6 +338,10 @@ pub struct WhiteboardCore {
     creation_current: Option<Point>,
     creation_shape_type: Option<String>,
     creation_shape_id: Option<ShapeId>,
+    // Drawing state
+    is_drawing: bool,
+    current_draw_points: Vec<Point>,
+    current_draw_id: Option<ShapeId>,
     // History for undo/redo
     history: History,
 }
@@ -318,6 +379,10 @@ impl WhiteboardCore {
             creation_current: None,
             creation_shape_type: None,
             creation_shape_id: None,
+            // Drawing state
+            is_drawing: false,
+            current_draw_points: Vec::new(),
+            current_draw_id: None,
             // History for undo/redo
             history: History::new(),
         }
@@ -1181,6 +1246,12 @@ impl WhiteboardCore {
                         *w = width;
                         *h = height;
                     }
+                    ShapeType::Draw { .. } => {
+                        // Draw shapes don't support drag creation
+                    }
+                    ShapeType::DrawPreTriangulated { .. } => {
+                        // Pre-triangulated draw shapes don't support drag creation
+                    }
                 }
             }
         }
@@ -1224,6 +1295,364 @@ impl WhiteboardCore {
     #[wasm_bindgen]
     pub fn is_creating_shape(&self) -> bool {
         self.is_creating_shape
+    }
+
+    /// Start drawing a new path
+    #[wasm_bindgen]
+    pub fn start_drawing(&mut self, x: f64, y: f64) {
+        // Save state before operation
+        self.save_state();
+
+        // Convert screen coordinates to world coordinates
+        let world_x = (x / self.camera_scale as f64) + self.camera_translation[0] as f64;
+        let world_y = (y / self.camera_scale as f64) + self.camera_translation[1] as f64;
+
+        web_sys::console::log_1(&format!("🎨 Starting drawing at screen ({}, {}) -> world ({}, {})", x, y, world_x, world_y).into());
+
+        let id = ShapeId(self.next_id);
+        self.next_id += 1;
+
+        // Start with the initial point
+        let initial_point = Point { x: world_x, y: world_y };
+        self.current_draw_points = vec![initial_point];
+        self.current_draw_id = Some(id);
+        self.is_drawing = true;
+
+        // Create the initial draw shape
+        let shape = Shape {
+            id,
+            position: initial_point, // Position is the first point
+            shape_type: ShapeType::Draw {
+                points: self.current_draw_points.clone(),
+                stroke_width: 2.0,
+            },
+            color: [0.0, 1.0, 1.0, 1.0], // Bright cyan - very visible on dark background
+        };
+
+        self.shapes.insert(id, shape);
+        web_sys::console::log_1(&format!("🎨 Created draw shape with ID {}", id.0).into());
+    }
+
+    /// Add a point to the current drawing path
+    #[wasm_bindgen]
+    pub fn add_draw_point(&mut self, x: f64, y: f64) {
+        if !self.is_drawing || self.current_draw_id.is_none() {
+            return;
+        }
+
+        // Convert screen coordinates to world coordinates
+        let world_x = (x / self.camera_scale as f64) + self.camera_translation[0] as f64;
+        let world_y = (y / self.camera_scale as f64) + self.camera_translation[1] as f64;
+
+        let new_point = Point { x: world_x, y: world_y };
+
+        // Apply distance filtering to reduce noise and create smoother lines
+        let min_distance = 2.0; // Minimum distance between points
+        if let Some(last_point) = self.current_draw_points.last() {
+            let dx = new_point.x - last_point.x;
+            let dy = new_point.y - last_point.y;
+            let distance = (dx * dx + dy * dy).sqrt();
+
+            // Only add point if it's far enough from the last point
+            if distance < min_distance {
+                return;
+            }
+        }
+
+        // Add point to current path
+        self.current_draw_points.push(new_point);
+        web_sys::console::log_1(&format!("🎨 Added point {}: ({}, {}) - total points: {}",
+            self.current_draw_points.len(), world_x, world_y, self.current_draw_points.len()).into());
+
+        // Update the shape with new points
+        if let Some(shape_id) = self.current_draw_id {
+            if let Some(shape) = self.shapes.get_mut(&shape_id) {
+                if let ShapeType::Draw { points, .. } = &mut shape.shape_type {
+                    *points = self.current_draw_points.clone();
+                }
+            }
+        }
+    }
+
+    /// Finish the current drawing path
+    #[wasm_bindgen]
+    pub fn finish_drawing(&mut self) -> Option<u32> {
+        if !self.is_drawing {
+            return None;
+        }
+
+        let shape_id = self.current_draw_id?;
+
+        // Reset drawing state
+        self.is_drawing = false;
+        self.current_draw_points.clear();
+        self.current_draw_id = None;
+
+        Some(shape_id.0)
+    }
+
+    /// Cancel the current drawing
+    #[wasm_bindgen]
+    pub fn cancel_drawing(&mut self) {
+        if let Some(shape_id) = self.current_draw_id {
+            self.shapes.remove(&shape_id);
+        }
+
+        self.is_drawing = false;
+        self.current_draw_points.clear();
+        self.current_draw_id = None;
+    }
+
+    /// Check if currently drawing
+    #[wasm_bindgen]
+    pub fn is_drawing(&self) -> bool {
+        self.is_drawing
+    }
+
+    /// Create a draw shape from pre-triangulated vertices (from perfect-freehand JavaScript)
+    #[wasm_bindgen]
+    pub fn create_draw_shape_from_triangles(&mut self, vertices_js: &js_sys::Array) -> u32 {
+        self.create_smooth_draw_shape(vertices_js)
+    }
+
+    /// Create a draw shape from pre-triangulated vertices (from perfect-freehand JavaScript)
+    #[wasm_bindgen]
+    pub fn create_smooth_draw_shape(&mut self, vertices_js: &js_sys::Array) -> u32 {
+        // Don't save state for live drawing - only save at start/end of drawing session
+        // self.save_state();
+
+        let id = ShapeId(self.next_id);
+        self.next_id += 1;
+
+        // Convert the pre-triangulated vertices from JavaScript
+        let mut vertices = Vec::new();
+        let mut positions = Vec::new();
+
+        web_sys::console::log_1(&format!("Rust: Received {} vertex objects from JS", vertices_js.length()).into());
+
+        for i in 0..vertices_js.length() {
+            if let Ok(vertex_obj) = vertices_js.get(i).dyn_into::<js_sys::Object>() {
+                // Debug: log what we're receiving
+                if i == 0 {
+                    web_sys::console::log_1(&format!("Rust: First vertex object type: {:?}", vertex_obj).into());
+
+                    // Try to get all properties
+                    let keys = js_sys::Object::keys(&vertex_obj);
+                    let mut key_names = Vec::new();
+                    for j in 0..keys.length() {
+                        if let Some(key) = keys.get(j).as_string() {
+                            key_names.push(key);
+                        }
+                    }
+                    web_sys::console::log_1(&format!("Rust: Vertex object keys: {:?}", key_names).into());
+                }
+
+                // Extract position
+                if let Ok(position_val) = js_sys::Reflect::get(&vertex_obj, &"position".into()) {
+                    if i == 0 {
+                        web_sys::console::log_1(&format!("Rust: Position value type: {:?}", position_val).into());
+                    }
+                    if let Ok(position_array) = position_val.dyn_into::<js_sys::Array>() {
+                        if position_array.length() >= 2 {
+                            if let (Some(x), Some(y)) = (
+                                position_array.get(0).as_f64(),
+                                position_array.get(1).as_f64()
+                            ) {
+                                // For pre-triangulated vertices, keep screen coordinates
+                                // The triangulation was done in screen space and should stay that way
+                                positions.push(Point { x, y });
+
+                                // Extract other vertex properties
+                                let color = if let Ok(color_val) = js_sys::Reflect::get(&vertex_obj, &"color".into()) {
+                                    if let Ok(color_array) = color_val.dyn_into::<js_sys::Array>() {
+                                        [
+                                            color_array.get(0).as_f64().unwrap_or(1.0) as f32,
+                                            color_array.get(1).as_f64().unwrap_or(1.0) as f32,
+                                            color_array.get(2).as_f64().unwrap_or(1.0) as f32,
+                                            color_array.get(3).as_f64().unwrap_or(1.0) as f32,
+                                        ]
+                                    } else {
+                                        [1.0, 1.0, 1.0, 1.0]
+                                    }
+                                } else {
+                                    [1.0, 1.0, 1.0, 1.0]
+                                };
+
+                                let uv = if let Ok(uv_val) = js_sys::Reflect::get(&vertex_obj, &"uv".into()) {
+                                    if let Ok(uv_array) = uv_val.dyn_into::<js_sys::Array>() {
+                                        [
+                                            uv_array.get(0).as_f64().unwrap_or(0.0) as f32,
+                                            uv_array.get(1).as_f64().unwrap_or(0.0) as f32,
+                                        ]
+                                    } else {
+                                        [0.0, 0.0]
+                                    }
+                                } else {
+                                    [0.0, 0.0]
+                                };
+
+                                let shape_type = js_sys::Reflect::get(&vertex_obj, &"shape_type".into())
+                                    .ok()
+                                    .and_then(|v| v.as_f64())
+                                    .unwrap_or(0.0) as f32;
+
+                                vertices.push(Vertex {
+                                    position: [x as f32, y as f32],  // Keep screen coordinates
+                                    color,
+                                    uv,
+                                    shape_type: 4.0, // Special shape type for pre-triangulated vertices
+                                });
+                            }
+                        }
+                    } else {
+                        if i == 0 {
+                            web_sys::console::log_1(&"Rust: Failed to convert position to array".into());
+                        }
+                    }
+                } else {
+                    if i == 0 {
+                        web_sys::console::log_1(&"Rust: Failed to get position property".into());
+                    }
+                }
+            } else {
+                if i == 0 {
+                    web_sys::console::log_1(&"Rust: Failed to convert to JS object".into());
+                }
+            }
+        }
+
+        if vertices.is_empty() || positions.is_empty() {
+            web_sys::console::log_1(&"Rust: No vertices parsed, returning 0".into());
+            return 0; // Invalid shape
+        }
+
+        web_sys::console::log_1(&format!("Rust: Successfully parsed {} vertices, {} positions", vertices.len(), positions.len()).into());
+
+        // Calculate bounding box for position
+        let min_x = positions.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        let min_y = positions.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+
+        let shape = Shape {
+            id,
+            position: Point { x: min_x, y: min_y },
+            shape_type: ShapeType::DrawPreTriangulated {
+                vertices,
+                bounding_points: positions,
+            },
+            color: [1.0, 1.0, 1.0, 1.0], // White
+        };
+
+        self.shapes.insert(id, shape);
+        id.0
+    }
+
+    /// Update an existing draw shape with new points (for live drawing)
+    #[wasm_bindgen]
+    pub fn update_draw_shape(&mut self, shape_id: u32, vertices_js: &js_sys::Array) -> bool {
+        let id = ShapeId(shape_id);
+
+        if let Some(shape) = self.shapes.get_mut(&id) {
+            // Check if this is a pre-triangulated shape
+            if let ShapeType::DrawPreTriangulated { vertices: ref mut shape_vertices, bounding_points: ref mut bounding_points } = &mut shape.shape_type {
+                // Convert the pre-triangulated vertices from JavaScript (same as create_smooth_draw_shape)
+                let mut vertices = Vec::new();
+                let mut positions = Vec::new();
+
+                for i in 0..vertices_js.length() {
+                    if let Ok(vertex_obj) = vertices_js.get(i).dyn_into::<js_sys::Object>() {
+                        // Extract position array
+                        if let Ok(position_val) = js_sys::Reflect::get(&vertex_obj, &"position".into()) {
+                            if let Ok(position_array) = position_val.dyn_into::<js_sys::Array>() {
+                                if position_array.length() >= 2 {
+                                    if let (Some(x), Some(y)) = (
+                                        position_array.get(0).as_f64(),
+                                        position_array.get(1).as_f64()
+                                    ) {
+                                        positions.push(Point { x, y });
+
+                                        // Extract other vertex properties
+                                        let color = if let Ok(color_val) = js_sys::Reflect::get(&vertex_obj, &"color".into()) {
+                                            if let Ok(color_array) = color_val.dyn_into::<js_sys::Array>() {
+                                                [
+                                                    color_array.get(0).as_f64().unwrap_or(1.0) as f32,
+                                                    color_array.get(1).as_f64().unwrap_or(1.0) as f32,
+                                                    color_array.get(2).as_f64().unwrap_or(1.0) as f32,
+                                                    color_array.get(3).as_f64().unwrap_or(1.0) as f32,
+                                                ]
+                                            } else { [1.0, 1.0, 1.0, 1.0] }
+                                        } else { [1.0, 1.0, 1.0, 1.0] };
+
+                                        let uv = if let Ok(uv_val) = js_sys::Reflect::get(&vertex_obj, &"uv".into()) {
+                                            if let Ok(uv_array) = uv_val.dyn_into::<js_sys::Array>() {
+                                                [
+                                                    uv_array.get(0).as_f64().unwrap_or(0.0) as f32,
+                                                    uv_array.get(1).as_f64().unwrap_or(0.0) as f32,
+                                                ]
+                                            } else { [0.0, 0.0] }
+                                        } else { [0.0, 0.0] };
+
+                                        let shape_type = if let Ok(st_val) = js_sys::Reflect::get(&vertex_obj, &"shape_type".into()) {
+                                            st_val.as_f64().unwrap_or(0.0) as f32
+                                        } else { 0.0 };
+
+                                        vertices.push(Vertex {
+                                            position: [x as f32, y as f32],
+                                            color,
+                                            uv,
+                                            shape_type,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !vertices.is_empty() {
+                    // Update the shape's vertices and bounding points
+                    *shape_vertices = vertices;
+                    *bounding_points = positions;
+
+                    // Update position to new bounding box
+                    let min_x = bounding_points.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                    let min_y = bounding_points.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                    shape.position = Point { x: min_x, y: min_y };
+
+                    return true;
+                }
+            } else if let ShapeType::Draw { points: ref mut shape_points, .. } = &mut shape.shape_type {
+                // Handle regular draw shapes (legacy)
+                let mut points = Vec::new();
+                for i in 0..vertices_js.length() {
+                    if let Ok(vertex_obj) = vertices_js.get(i).dyn_into::<js_sys::Object>() {
+                        if let (Ok(x_val), Ok(y_val)) = (
+                            js_sys::Reflect::get(&vertex_obj, &"x".into()),
+                            js_sys::Reflect::get(&vertex_obj, &"y".into())
+                        ) {
+                            if let (Some(x), Some(y)) = (x_val.as_f64(), y_val.as_f64()) {
+                                // Convert screen coordinates to world coordinates
+                                let world_x = (x / self.camera_scale as f64) + self.camera_translation[0] as f64;
+                                let world_y = (y / self.camera_scale as f64) + self.camera_translation[1] as f64;
+                                points.push(Point { x: world_x, y: world_y });
+                            }
+                        }
+                    }
+                }
+
+                if !points.is_empty() {
+                    *shape_points = points;
+
+                    // Update position to new bounding box
+                    let min_x = shape_points.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                    let min_y = shape_points.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                    shape.position = Point { x: min_x, y: min_y };
+
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     /// Check if undo is available
@@ -1543,7 +1972,13 @@ impl WhiteboardCore {
                     }
                 }
             }
-
+            ShapeType::Draw { .. } => {
+                // Draw shapes don't support traditional resizing
+                // Could implement scaling in the future
+            }
+            ShapeType::DrawPreTriangulated { .. } => {
+                // Pre-triangulated draw shapes don't support traditional resizing
+            }
         }
 
         resize_data
@@ -1950,6 +2385,27 @@ impl WhiteboardCore {
                     // Don't render any outline for widgets - show raw widget form only
                     // Widgets are rendered by the overlay system, not the canvas
                 }
+                ShapeType::Draw { points, stroke_width } => {
+                    // Render draw path as stroke line
+                    web_sys::console::log_1(&format!("🎨 Rendering draw shape with {} points, stroke_width: {}", points.len(), stroke_width).into());
+                    self.tessellate_draw_path(&mut vertices, points, shape.color, *stroke_width);
+                    // Add None for draw shapes (they don't need textures)
+                    texture_data_urls.push(None);
+                }
+                ShapeType::DrawPreTriangulated { vertices: shape_vertices, .. } => {
+                    // Use the pre-triangulated vertices directly from JavaScript
+                    web_sys::console::log_1(&format!("Rust: Rendering {} pre-triangulated vertices", shape_vertices.len()).into());
+                    if !shape_vertices.is_empty() {
+                        web_sys::console::log_1(&format!("Rust: First vertex position: [{}, {}]",
+                            shape_vertices[0].position[0], shape_vertices[0].position[1]).into());
+                        web_sys::console::log_1(&format!("Rust: Last vertex position: [{}, {}]",
+                            shape_vertices[shape_vertices.len()-1].position[0],
+                            shape_vertices[shape_vertices.len()-1].position[1]).into());
+                    }
+                    vertices.extend_from_slice(shape_vertices);
+                    // Add None for draw shapes (they don't need textures)
+                    texture_data_urls.push(None);
+                }
             }
         }
 
@@ -2039,6 +2495,875 @@ impl WhiteboardCore {
             ShapeType::Widget { .. } => {
                 // Don't render selection outline for widgets - keep them completely clean
             }
+            ShapeType::Draw { points, .. } => {
+                // Render selection outline for draw paths using the bounding box
+                let bbox = self.get_draw_bounding_box(points);
+                self.tessellate_rectangle_outline(&mut *vertices,
+                    Point { x: bbox.min_x, y: bbox.min_y },
+                    bbox.max_x - bbox.min_x,
+                    bbox.max_y - bbox.min_y,
+                    outline_color, outline_width);
+            }
+            ShapeType::DrawPreTriangulated { bounding_points, .. } => {
+                // Render selection outline for pre-triangulated draw paths using the bounding box
+                let bbox = self.get_draw_bounding_box(bounding_points);
+                self.tessellate_rectangle_outline(&mut *vertices,
+                    Point { x: bbox.min_x, y: bbox.min_y },
+                    bbox.max_x - bbox.min_x,
+                    bbox.max_y - bbox.min_y,
+                    outline_color, outline_width);
+            }
+        }
+    }
+
+    fn get_draw_bounding_box(&self, points: &[Point]) -> BoundingBox {
+        if points.is_empty() {
+            return BoundingBox::new(0.0, 0.0, 0.0, 0.0);
+        }
+
+        let mut min_x = points[0].x;
+        let mut min_y = points[0].y;
+        let mut max_x = points[0].x;
+        let mut max_y = points[0].y;
+
+        for point in points {
+            min_x = min_x.min(point.x);
+            min_y = min_y.min(point.y);
+            max_x = max_x.max(point.x);
+            max_y = max_y.max(point.y);
+        }
+
+        BoundingBox::new(min_x, min_y, max_x, max_y)
+    }
+
+    fn tessellate_smooth_polygon(&self, vertices: &mut Vec<Vertex>, points: &[Point], color: [f32; 4]) {
+        if points.len() < 4 {
+            return;
+        }
+
+        // The debug output shows that perfect-freehand creates a proper stroke outline
+        // We need to tessellate this outline as a closed polygon, not as curves
+        // The issue was that I was trying to create curves when the outline IS the shape
+
+        // Use proper polygon tessellation - the outline points form the boundary
+        self.tessellate_polygon_outline(vertices, points, color);
+    }
+
+    fn create_smooth_path_from_outline(&self, points: &[Point]) -> Vec<Point> {
+        if points.len() < 4 {
+            return points.to_vec();
+        }
+
+        let mut path_points = Vec::new();
+
+        // Start with the first point
+        path_points.push(points[0]);
+
+        // Create smooth curves using the same algorithm as getSvgPathFromStroke
+        let mut a = points[0];
+        let mut b = points[1];
+        let c = points[2];
+
+        // Add the first quadratic curve control point
+        path_points.push(b);
+        path_points.push(Point {
+            x: (b.x + c.x) / 2.0,
+            y: (b.y + c.y) / 2.0,
+        });
+
+        // Add smooth curve points for the rest
+        for i in 2..(points.len() - 1) {
+            a = points[i];
+            b = points[i + 1];
+
+            // Add the averaged point (this creates the smooth curves)
+            path_points.push(Point {
+                x: (a.x + b.x) / 2.0,
+                y: (a.y + b.y) / 2.0,
+            });
+        }
+
+        // Close the path
+        if points.len() > 3 {
+            path_points.push(points[0]);
+        }
+
+        path_points
+    }
+
+    fn tessellate_smooth_path(&self, vertices: &mut Vec<Vertex>, path_points: &[Point], color: [f32; 4]) {
+        if path_points.len() < 3 {
+            return;
+        }
+
+        // Use fan triangulation from centroid for the smooth path
+        let mut centroid = Point { x: 0.0, y: 0.0 };
+        for point in path_points {
+            centroid.x += point.x;
+            centroid.y += point.y;
+        }
+        centroid.x /= path_points.len() as f64;
+        centroid.y /= path_points.len() as f64;
+
+        // Create triangles from centroid to each edge
+        for i in 0..path_points.len() {
+            let p1 = path_points[i];
+            let p2 = path_points[(i + 1) % path_points.len()];
+
+            vertices.extend_from_slice(&[
+                Vertex {
+                    position: [centroid.x as f32, centroid.y as f32],
+                    color,
+                    uv: [0.5, 0.5],
+                    shape_type: 0.0
+                },
+                Vertex {
+                    position: [p1.x as f32, p1.y as f32],
+                    color,
+                    uv: [0.0, 0.0],
+                    shape_type: 0.0
+                },
+                Vertex {
+                    position: [p2.x as f32, p2.y as f32],
+                    color,
+                    uv: [1.0, 0.0],
+                    shape_type: 0.0
+                },
+            ]);
+        }
+    }
+
+    fn tessellate_polygon_outline(&self, vertices: &mut Vec<Vertex>, points: &[Point], color: [f32; 4]) {
+        if points.len() < 3 {
+            return;
+        }
+
+        // Perfect-freehand creates stroke outlines that are closed polygons
+        // Instead of complex triangulation, let's use the same approach as the JavaScript triangulation
+        // which uses simple fan triangulation from the first point
+
+        // This matches the getTrianglesFromStroke function in perfect-freehand.ts
+        let center = points[0];
+
+        for i in 1..points.len() - 1 {
+            let p1 = points[i];
+            let p2 = points[i + 1];
+
+            // Triangle: center -> p1 -> p2 (same as JavaScript implementation)
+            vertices.extend_from_slice(&[
+                Vertex {
+                    position: [center.x as f32, center.y as f32],
+                    color,
+                    uv: [0.5, 0.5],
+                    shape_type: 0.0
+                },
+                Vertex {
+                    position: [p1.x as f32, p1.y as f32],
+                    color,
+                    uv: [0.0, 0.0],
+                    shape_type: 0.0
+                },
+                Vertex {
+                    position: [p2.x as f32, p2.y as f32],
+                    color,
+                    uv: [1.0, 0.0],
+                    shape_type: 0.0
+                },
+            ]);
+        }
+    }
+
+    fn ear_clip_triangulation(&self, points: &[Point]) -> Vec<[Point; 3]> {
+        if points.len() < 3 {
+            return Vec::new();
+        }
+
+        // For stroke outlines from perfect-freehand, we should use a more robust approach
+        // Instead of complex ear clipping, let's use a simpler but more reliable method
+
+        let mut triangles = Vec::new();
+
+        // Use a modified approach that works better for stroke outlines
+        // Perfect-freehand creates stroke outlines that are essentially "ribbons"
+        // We can triangulate them more reliably using a different strategy
+
+        if points.len() == 3 {
+            triangles.push([points[0], points[1], points[2]]);
+            return triangles;
+        }
+
+        // For stroke polygons, try a more robust triangulation
+        // Use a combination of ear clipping and constrained triangulation
+
+        let mut remaining_indices: Vec<usize> = (0..points.len()).collect();
+        let mut iteration_count = 0;
+        let max_iterations = points.len() * 2; // Prevent infinite loops
+
+        while remaining_indices.len() > 3 && iteration_count < max_iterations {
+            let mut ear_found = false;
+            iteration_count += 1;
+
+            for i in 0..remaining_indices.len() {
+                let prev_idx = remaining_indices[(i + remaining_indices.len() - 1) % remaining_indices.len()];
+                let curr_idx = remaining_indices[i];
+                let next_idx = remaining_indices[(i + 1) % remaining_indices.len()];
+
+                let prev = points[prev_idx];
+                let curr = points[curr_idx];
+                let next = points[next_idx];
+
+                // Check if this forms a valid ear
+                if self.is_ear_robust(&points, &remaining_indices, i) {
+                    triangles.push([prev, curr, next]);
+                    remaining_indices.remove(i);
+                    ear_found = true;
+                    break;
+                }
+            }
+
+            if !ear_found {
+                // If no ear found, try a different approach
+                // Use a simple strip triangulation for stroke-like polygons
+                break;
+            }
+        }
+
+        // Handle remaining points
+        if remaining_indices.len() == 3 {
+            let p0 = points[remaining_indices[0]];
+            let p1 = points[remaining_indices[1]];
+            let p2 = points[remaining_indices[2]];
+            triangles.push([p0, p1, p2]);
+        } else if remaining_indices.len() > 3 {
+            // Fallback: use a simple fan from the first remaining point
+            let center_idx = remaining_indices[0];
+            let center = points[center_idx];
+
+            for i in 1..remaining_indices.len() - 1 {
+                let p1 = points[remaining_indices[i]];
+                let p2 = points[remaining_indices[i + 1]];
+                triangles.push([center, p1, p2]);
+            }
+        }
+
+        triangles
+    }
+
+    fn is_ear_robust(&self, points: &[Point], remaining_indices: &[usize], index: usize) -> bool {
+        let n = remaining_indices.len();
+        if n < 3 {
+            return false;
+        }
+
+        let prev_idx = remaining_indices[(index + n - 1) % n];
+        let curr_idx = remaining_indices[index];
+        let next_idx = remaining_indices[(index + 1) % n];
+
+        let prev = points[prev_idx];
+        let curr = points[curr_idx];
+        let next = points[next_idx];
+
+        // Check if the angle is convex (cross product test)
+        let cross = (curr.x - prev.x) * (next.y - prev.y) - (curr.y - prev.y) * (next.x - prev.x);
+        if cross <= 0.0 {
+            return false; // Not convex
+        }
+
+        // Check if any other remaining point is inside this triangle
+        for &other_idx in remaining_indices {
+            if other_idx == prev_idx || other_idx == curr_idx || other_idx == next_idx {
+                continue;
+            }
+
+            if self.point_in_triangle(points[other_idx], prev, curr, next) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn is_ear(&self, points: &[Point], index: usize) -> bool {
+        let n = points.len();
+        let prev = points[(index + n - 1) % n];
+        let curr = points[index];
+        let next = points[(index + 1) % n];
+
+        // Check if the angle is convex (cross product test)
+        let cross = (curr.x - prev.x) * (next.y - prev.y) - (curr.y - prev.y) * (next.x - prev.x);
+        if cross <= 0.0 {
+            return false; // Not convex
+        }
+
+        // Check if any other point is inside this triangle
+        for i in 0..n {
+            if i == index || i == (index + n - 1) % n || i == (index + 1) % n {
+                continue;
+            }
+
+            if self.point_in_triangle(points[i], prev, curr, next) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn point_in_triangle(&self, p: Point, a: Point, b: Point, c: Point) -> bool {
+        let denom = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y);
+        if denom.abs() < 1e-10 {
+            return false;
+        }
+
+        let alpha = ((b.y - c.y) * (p.x - c.x) + (c.x - b.x) * (p.y - c.y)) / denom;
+        let beta = ((c.y - a.y) * (p.x - c.x) + (a.x - c.x) * (p.y - c.y)) / denom;
+        let gamma = 1.0 - alpha - beta;
+
+        alpha > 0.0 && beta > 0.0 && gamma > 0.0
+    }
+
+    fn triangulate_polygon(&self, points: &[Point]) -> Vec<[Point; 3]> {
+        let mut triangles = Vec::new();
+
+        if points.len() < 3 {
+            return triangles;
+        }
+
+        // For now, use a simple fan triangulation from the centroid
+        // This should work better than fan from first vertex
+        let mut centroid = Point { x: 0.0, y: 0.0 };
+        for point in points {
+            centroid.x += point.x;
+            centroid.y += point.y;
+        }
+        centroid.x /= points.len() as f64;
+        centroid.y /= points.len() as f64;
+
+        // Create triangles from centroid to each edge
+        for i in 0..points.len() {
+            let p1 = points[i];
+            let p2 = points[(i + 1) % points.len()];
+            triangles.push([centroid, p1, p2]);
+        }
+
+        triangles
+    }
+
+    fn tessellate_consistent_line(&self, vertices: &mut Vec<Vertex>, points: &[Point], color: [f32; 4], stroke_width: f64) {
+        if points.len() < 2 {
+            return;
+        }
+
+        // Create consistent-width lines like tldraw's draw tool
+        let half_width = (stroke_width.max(2.0) / 2.0) as f32; // Minimum 1px radius
+
+        // Create line segments between consecutive points with proper joins
+        for i in 0..points.len() - 1 {
+            let p1 = points[i];
+            let p2 = points[i + 1];
+
+            // Calculate direction vector
+            let dx = p2.x - p1.x;
+            let dy = p2.y - p1.y;
+            let length = (dx * dx + dy * dy).sqrt();
+
+            if length > 0.001 { // Avoid division by zero
+                // Normalize direction
+                let dir_x = dx / length;
+                let dir_y = dy / length;
+
+                // Calculate perpendicular (normal) vector
+                let nx = -dir_y as f32 * half_width;
+                let ny = dir_x as f32 * half_width;
+
+                let x1 = p1.x as f32;
+                let y1 = p1.y as f32;
+                let x2 = p2.x as f32;
+                let y2 = p2.y as f32;
+
+                // Create quad for this line segment
+                // First triangle
+                vertices.extend_from_slice(&[
+                    Vertex { position: [x1 + nx, y1 + ny], color, uv: [0.0, 0.0], shape_type: 0.0 },
+                    Vertex { position: [x1 - nx, y1 - ny], color, uv: [0.0, 1.0], shape_type: 0.0 },
+                    Vertex { position: [x2 + nx, y2 + ny], color, uv: [1.0, 0.0], shape_type: 0.0 },
+                ]);
+
+                // Second triangle
+                vertices.extend_from_slice(&[
+                    Vertex { position: [x1 - nx, y1 - ny], color, uv: [0.0, 1.0], shape_type: 0.0 },
+                    Vertex { position: [x2 - nx, y2 - ny], color, uv: [1.0, 1.0], shape_type: 0.0 },
+                    Vertex { position: [x2 + nx, y2 + ny], color, uv: [1.0, 0.0], shape_type: 0.0 },
+                ]);
+            }
+        }
+
+        // Add rounded caps at start and end for smoother appearance
+        if points.len() >= 2 {
+            self.tessellate_line_end_cap(vertices, points[0], color, half_width);
+            self.tessellate_line_end_cap(vertices, points[points.len() - 1], color, half_width);
+        }
+    }
+
+    fn tessellate_line_end_cap(&self, vertices: &mut Vec<Vertex>, center: Point, color: [f32; 4], radius: f32) {
+        let cx = center.x as f32;
+        let cy = center.y as f32;
+
+        // Create a simple rounded cap using a few triangles
+        let segments = 8; // Number of segments for the cap
+        let angle_step = 2.0 * std::f32::consts::PI / segments as f32;
+
+        for i in 0..segments {
+            let angle1 = i as f32 * angle_step;
+            let angle2 = (i + 1) as f32 * angle_step;
+
+            let x1 = cx + radius * angle1.cos();
+            let y1 = cy + radius * angle1.sin();
+            let x2 = cx + radius * angle2.cos();
+            let y2 = cy + radius * angle2.sin();
+
+            // Triangle for cap segment
+            vertices.extend_from_slice(&[
+                Vertex { position: [cx, cy], color, uv: [0.5, 0.5], shape_type: 0.0 },
+                Vertex { position: [x1, y1], color, uv: [0.0, 0.0], shape_type: 0.0 },
+                Vertex { position: [x2, y2], color, uv: [1.0, 0.0], shape_type: 0.0 },
+            ]);
+        }
+    }
+
+    fn tessellate_perfect_freehand_polygon(&self, vertices: &mut Vec<Vertex>, points: &[Point], color: [f32; 4]) {
+        if points.len() < 3 {
+            return;
+        }
+
+        // Perfect-freehand gives us outline points that form a closed polygon
+        // We need to tessellate this polygon properly
+
+        // Use ear clipping algorithm for proper polygon tessellation
+        // For now, use a simple approach that works well for convex-ish polygons
+
+        // Find a good center point for fan triangulation
+        // Use the centroid of the polygon
+        let mut centroid_x = 0.0;
+        let mut centroid_y = 0.0;
+        for point in points {
+            centroid_x += point.x;
+            centroid_y += point.y;
+        }
+        centroid_x /= points.len() as f64;
+        centroid_y /= points.len() as f64;
+
+        // Create triangles from centroid to each edge of the polygon
+        for i in 0..points.len() {
+            let p1 = points[i];
+            let p2 = points[(i + 1) % points.len()];
+
+            // Create triangle: centroid -> p1 -> p2
+            vertices.extend_from_slice(&[
+                Vertex {
+                    position: [centroid_x as f32, centroid_y as f32],
+                    color,
+                    uv: [0.5, 0.5],
+                    shape_type: 0.0
+                },
+                Vertex {
+                    position: [p1.x as f32, p1.y as f32],
+                    color,
+                    uv: [0.0, 0.0],
+                    shape_type: 0.0
+                },
+                Vertex {
+                    position: [p2.x as f32, p2.y as f32],
+                    color,
+                    uv: [1.0, 0.0],
+                    shape_type: 0.0
+                },
+            ]);
+        }
+    }
+
+    fn tessellate_thin_line(&self, vertices: &mut Vec<Vertex>, points: &[Point], color: [f32; 4], stroke_width: f64) {
+        if points.len() < 2 {
+            return;
+        }
+
+        // Use a very thin line width for actual line drawing (not brush strokes)
+        let line_width = (stroke_width.min(3.0) / 2.0) as f32; // Max 1.5px radius for thin lines
+
+        // Create thin line segments between consecutive points
+        for i in 0..points.len() - 1 {
+            let p1 = points[i];
+            let p2 = points[i + 1];
+
+            // Calculate direction vector
+            let dx = p2.x - p1.x;
+            let dy = p2.y - p1.y;
+            let length = (dx * dx + dy * dy).sqrt();
+
+            if length > 0.0 {
+                // Normalize direction
+                let dir_x = dx / length;
+                let dir_y = dy / length;
+
+                // Calculate perpendicular (normal) vector for thin line
+                let nx = -dir_y as f32 * line_width;
+                let ny = dir_x as f32 * line_width;
+
+                let x1 = p1.x as f32;
+                let y1 = p1.y as f32;
+                let x2 = p2.x as f32;
+                let y2 = p2.y as f32;
+
+                // Create thin quad for this line segment
+                // First triangle
+                vertices.extend_from_slice(&[
+                    Vertex { position: [x1 + nx, y1 + ny], color, uv: [0.0, 0.0], shape_type: 0.0 },
+                    Vertex { position: [x1 - nx, y1 - ny], color, uv: [0.0, 1.0], shape_type: 0.0 },
+                    Vertex { position: [x2 + nx, y2 + ny], color, uv: [1.0, 0.0], shape_type: 0.0 },
+                ]);
+
+                // Second triangle
+                vertices.extend_from_slice(&[
+                    Vertex { position: [x1 - nx, y1 - ny], color, uv: [0.0, 1.0], shape_type: 0.0 },
+                    Vertex { position: [x2 - nx, y2 - ny], color, uv: [1.0, 1.0], shape_type: 0.0 },
+                    Vertex { position: [x2 + nx, y2 + ny], color, uv: [1.0, 0.0], shape_type: 0.0 },
+                ]);
+
+                // Add small rounded caps for smoother joints
+                if i == 0 {
+                    self.tessellate_small_cap(vertices, p1, line_width, color);
+                }
+                if i == points.len() - 2 {
+                    self.tessellate_small_cap(vertices, p2, line_width, color);
+                }
+            }
+        }
+    }
+
+    fn tessellate_small_cap(&self, vertices: &mut Vec<Vertex>, center: Point, radius: f32, color: [f32; 4]) {
+        let cx = center.x as f32;
+        let cy = center.y as f32;
+
+        // Create a small rounded cap using fewer segments for thin lines
+        let segments = 6; // Fewer segments for small caps
+        let angle_step = 2.0 * std::f32::consts::PI / segments as f32;
+
+        for i in 0..segments {
+            let angle1 = i as f32 * angle_step;
+            let angle2 = (i + 1) as f32 * angle_step;
+
+            let x1 = cx + radius * angle1.cos();
+            let y1 = cy + radius * angle1.sin();
+            let x2 = cx + radius * angle2.cos();
+            let y2 = cy + radius * angle2.sin();
+
+            // Triangle for cap segment
+            vertices.extend_from_slice(&[
+                Vertex { position: [cx, cy], color, uv: [0.5, 0.5], shape_type: 0.0 },
+                Vertex { position: [x1, y1], color, uv: [0.0, 0.0], shape_type: 0.0 },
+                Vertex { position: [x2, y2], color, uv: [1.0, 0.0], shape_type: 0.0 },
+            ]);
+        }
+    }
+
+    fn tessellate_stroke_polygon(&self, vertices: &mut Vec<Vertex>, points: &[Point], color: [f32; 4]) {
+        if points.len() < 3 {
+            return;
+        }
+
+        // Use earcut-style triangulation for smooth polygon rendering
+        // This is much better than fan triangulation for complex shapes
+
+        // Simple triangulation for now - we can improve this later with proper earcut
+        // For perfect-freehand outlines, fan triangulation from centroid usually works well
+
+        // Calculate centroid
+        let mut centroid_x = 0.0;
+        let mut centroid_y = 0.0;
+        for point in points {
+            centroid_x += point.x;
+            centroid_y += point.y;
+        }
+        centroid_x /= points.len() as f64;
+        centroid_y /= points.len() as f64;
+
+        // Create triangles from centroid to each edge
+        for i in 0..points.len() {
+            let p1 = points[i];
+            let p2 = points[(i + 1) % points.len()];
+
+            vertices.extend_from_slice(&[
+                Vertex {
+                    position: [centroid_x as f32, centroid_y as f32],
+                    color,
+                    uv: [0.5, 0.5],
+                    shape_type: 0.0
+                },
+                Vertex {
+                    position: [p1.x as f32, p1.y as f32],
+                    color,
+                    uv: [0.0, 0.0],
+                    shape_type: 0.0
+                },
+                Vertex {
+                    position: [p2.x as f32, p2.y as f32],
+                    color,
+                    uv: [1.0, 0.0],
+                    shape_type: 0.0
+                },
+            ]);
+        }
+    }
+
+    fn tessellate_smooth_line(&self, vertices: &mut Vec<Vertex>, points: &[Point], color: [f32; 4], stroke_width: f64) {
+        if points.len() < 2 {
+            return;
+        }
+
+        let half_width = (stroke_width / 2.0) as f32;
+
+        // Create line segments between consecutive points with proper joins
+        for i in 0..points.len() - 1 {
+            let p1 = points[i];
+            let p2 = points[i + 1];
+
+            // Calculate direction vector
+            let dx = p2.x - p1.x;
+            let dy = p2.y - p1.y;
+            let length = (dx * dx + dy * dy).sqrt();
+
+            if length > 0.0 {
+                // Normalize direction
+                let dir_x = dx / length;
+                let dir_y = dy / length;
+
+                // Calculate perpendicular (normal) vector
+                let nx = -dir_y as f32 * half_width;
+                let ny = dir_x as f32 * half_width;
+
+                let x1 = p1.x as f32;
+                let y1 = p1.y as f32;
+                let x2 = p2.x as f32;
+                let y2 = p2.y as f32;
+
+                // Create quad for this line segment
+                // First triangle
+                vertices.extend_from_slice(&[
+                    Vertex { position: [x1 + nx, y1 + ny], color, uv: [0.0, 0.0], shape_type: 0.0 },
+                    Vertex { position: [x1 - nx, y1 - ny], color, uv: [0.0, 1.0], shape_type: 0.0 },
+                    Vertex { position: [x2 + nx, y2 + ny], color, uv: [1.0, 0.0], shape_type: 0.0 },
+                ]);
+
+                // Second triangle
+                vertices.extend_from_slice(&[
+                    Vertex { position: [x1 - nx, y1 - ny], color, uv: [0.0, 1.0], shape_type: 0.0 },
+                    Vertex { position: [x2 - nx, y2 - ny], color, uv: [1.0, 1.0], shape_type: 0.0 },
+                    Vertex { position: [x2 + nx, y2 + ny], color, uv: [1.0, 0.0], shape_type: 0.0 },
+                ]);
+
+                // Add rounded caps at the ends for smoother appearance
+                if i == 0 {
+                    self.tessellate_line_cap(vertices, p1, nx, ny, color);
+                }
+                if i == points.len() - 2 {
+                    self.tessellate_line_cap(vertices, p2, nx, ny, color);
+                }
+            }
+        }
+    }
+
+    fn tessellate_line_cap(&self, vertices: &mut Vec<Vertex>, center: Point, nx: f32, ny: f32, color: [f32; 4]) {
+        let cx = center.x as f32;
+        let cy = center.y as f32;
+
+        // Create a simple rounded cap using a few triangles
+        let segments = 8; // Number of segments for the cap
+        let angle_step = std::f32::consts::PI / segments as f32;
+
+        for i in 0..segments {
+            let angle1 = i as f32 * angle_step;
+            let angle2 = (i + 1) as f32 * angle_step;
+
+            let radius = (nx * nx + ny * ny).sqrt();
+            let base_angle = ny.atan2(nx);
+
+            let x1 = cx + radius * (base_angle + angle1).cos();
+            let y1 = cy + radius * (base_angle + angle1).sin();
+            let x2 = cx + radius * (base_angle + angle2).cos();
+            let y2 = cy + radius * (base_angle + angle2).sin();
+
+            // Triangle for cap segment
+            vertices.extend_from_slice(&[
+                Vertex { position: [cx, cy], color, uv: [0.5, 0.5], shape_type: 0.0 },
+                Vertex { position: [x1, y1], color, uv: [0.0, 0.0], shape_type: 0.0 },
+                Vertex { position: [x2, y2], color, uv: [1.0, 0.0], shape_type: 0.0 },
+            ]);
+        }
+    }
+
+    fn tessellate_draw_polygon(&self, vertices: &mut Vec<Vertex>, points: &[Point], color: [f32; 4]) {
+        if points.len() < 3 {
+            return;
+        }
+
+        // Perfect-freehand gives us stroke outline points, we need to fill the stroke shape
+        // Use fan triangulation to fill the stroke polygon properly
+        let center_x = points.iter().map(|p| p.x).sum::<f64>() / points.len() as f64;
+        let center_y = points.iter().map(|p| p.y).sum::<f64>() / points.len() as f64;
+
+        for i in 0..points.len() {
+            let p1 = points[i];
+            let p2 = points[(i + 1) % points.len()]; // Wrap around to close the polygon
+
+            // Create triangle from center to edge
+            vertices.extend_from_slice(&[
+                Vertex {
+                    position: [center_x as f32, center_y as f32],
+                    color,
+                    uv: [0.5, 0.5],
+                    shape_type: 0.0
+                },
+                Vertex {
+                    position: [p1.x as f32, p1.y as f32],
+                    color,
+                    uv: [0.0, 0.0],
+                    shape_type: 0.0
+                },
+                Vertex {
+                    position: [p2.x as f32, p2.y as f32],
+                    color,
+                    uv: [1.0, 0.0],
+                    shape_type: 0.0
+                },
+            ]);
+        }
+    }
+
+    fn tessellate_draw_path(&self, vertices: &mut Vec<Vertex>, points: &[Point], color: [f32; 4], stroke_width: f64) {
+        if points.len() < 2 {
+            return;
+        }
+
+        // Apply smoothing to the input points
+        let smoothed_points = self.smooth_path(points);
+
+        if smoothed_points.len() < 2 {
+            return;
+        }
+
+        let half_width = (stroke_width / 2.0) as f32;
+
+        // Create line segments with proper joins
+        for i in 0..smoothed_points.len() - 1 {
+            let p1 = smoothed_points[i];
+            let p2 = smoothed_points[i + 1];
+
+            // Calculate direction vector
+            let dx = p2.x - p1.x;
+            let dy = p2.y - p1.y;
+            let length = (dx * dx + dy * dy).sqrt();
+
+            if length > 0.0 {
+                // Normalize direction
+                let dir_x = dx / length;
+                let dir_y = dy / length;
+
+                // Calculate perpendicular (normal) vector
+                let nx = -dir_y as f32 * half_width;
+                let ny = dir_x as f32 * half_width;
+
+                let x1 = p1.x as f32;
+                let y1 = p1.y as f32;
+                let x2 = p2.x as f32;
+                let y2 = p2.y as f32;
+
+                // Create quad for this line segment with rounded caps
+                // First triangle
+                vertices.extend_from_slice(&[
+                    Vertex { position: [x1 + nx, y1 + ny], color, uv: [0.0, 0.0], shape_type: 0.0 },
+                    Vertex { position: [x1 - nx, y1 - ny], color, uv: [0.0, 1.0], shape_type: 0.0 },
+                    Vertex { position: [x2 + nx, y2 + ny], color, uv: [1.0, 0.0], shape_type: 0.0 },
+                ]);
+
+                // Second triangle
+                vertices.extend_from_slice(&[
+                    Vertex { position: [x1 - nx, y1 - ny], color, uv: [0.0, 1.0], shape_type: 0.0 },
+                    Vertex { position: [x2 - nx, y2 - ny], color, uv: [1.0, 1.0], shape_type: 0.0 },
+                    Vertex { position: [x2 + nx, y2 + ny], color, uv: [1.0, 0.0], shape_type: 0.0 },
+                ]);
+
+                // Add rounded caps at the ends for smoother appearance
+                if i == 0 {
+                    self.tessellate_round_cap(vertices, p1, nx, ny, color);
+                }
+                if i == smoothed_points.len() - 2 {
+                    self.tessellate_round_cap(vertices, p2, nx, ny, color);
+                }
+            }
+        }
+    }
+
+    fn smooth_path(&self, points: &[Point]) -> Vec<Point> {
+        if points.len() <= 2 {
+            return points.to_vec();
+        }
+
+        // Apply multiple passes of smoothing for better results
+        let mut smoothed = points.to_vec();
+
+        // Apply 3 passes of smoothing for much smoother lines
+        for _pass in 0..3 {
+            let mut new_smoothed = Vec::with_capacity(smoothed.len());
+            new_smoothed.push(smoothed[0]); // Keep first point
+
+            // Apply aggressive smoothing using weighted average
+            for i in 1..smoothed.len() - 1 {
+                let prev = smoothed[i - 1];
+                let curr = smoothed[i];
+                let next = smoothed[i + 1];
+
+                // More aggressive smoothing weights for smoother curves
+                let smoothed_x = prev.x * 0.2 + curr.x * 0.6 + next.x * 0.2;
+                let smoothed_y = prev.y * 0.2 + curr.y * 0.6 + next.y * 0.2;
+
+                new_smoothed.push(Point { x: smoothed_x, y: smoothed_y });
+            }
+
+            new_smoothed.push(smoothed[smoothed.len() - 1]); // Keep last point
+            smoothed = new_smoothed;
+        }
+
+        smoothed
+    }
+
+
+
+    fn tessellate_round_cap(&self, vertices: &mut Vec<Vertex>, center: Point, nx: f32, ny: f32, color: [f32; 4]) {
+        let cx = center.x as f32;
+        let cy = center.y as f32;
+
+        // Create a simple rounded cap using a few triangles
+        let segments = 6; // Number of segments for the cap
+        let angle_step = std::f32::consts::PI / segments as f32;
+
+        for i in 0..segments {
+            let angle1 = i as f32 * angle_step;
+            let angle2 = (i + 1) as f32 * angle_step;
+
+            let radius = (nx * nx + ny * ny).sqrt();
+            let base_angle = ny.atan2(nx);
+
+            let x1 = cx + radius * (base_angle + angle1).cos();
+            let y1 = cy + radius * (base_angle + angle1).sin();
+            let x2 = cx + radius * (base_angle + angle2).cos();
+            let y2 = cy + radius * (base_angle + angle2).sin();
+
+            // Triangle for cap segment
+            vertices.extend_from_slice(&[
+                Vertex { position: [cx, cy], color, uv: [0.5, 0.5], shape_type: 0.0 },
+                Vertex { position: [x1, y1], color, uv: [0.0, 0.0], shape_type: 0.0 },
+                Vertex { position: [x2, y2], color, uv: [1.0, 0.0], shape_type: 0.0 },
+            ]);
         }
     }
 

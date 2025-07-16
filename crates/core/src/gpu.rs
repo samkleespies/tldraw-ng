@@ -6,7 +6,7 @@ use std::collections::HashMap;
 // ---------------- Vertex / Uniform types -----------------------------
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable, Debug)]
+#[derive(Clone, Copy, Pod, Zeroable, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Vertex {
     pub position: [f32; 2],
     pub color: [f32; 4],
@@ -110,6 +110,10 @@ pub struct GpuState {
     default_texture: wgpu::Texture,
     #[allow(dead_code)]
     default_texture_view: wgpu::TextureView,
+    // MSAA support
+    sample_count: u32,
+    msaa_texture: wgpu::Texture,
+    msaa_texture_view: wgpu::TextureView,
 }
 
 impl GpuState {
@@ -309,6 +313,9 @@ impl GpuState {
             push_constant_ranges: &[],
         });
 
+        // Enable 4x MSAA for smooth anti-aliased rendering
+        let sample_count = 4;
+
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("shape-pipeline"),
             layout: Some(&pipeline_layout),
@@ -330,10 +337,32 @@ impl GpuState {
             }),
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
             multiview: None,
             cache: None,
         });
+
+        // Create multisampled texture for MSAA
+        let msaa_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("msaa-texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+
+        let msaa_texture_view = msaa_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         Ok(Self {
             surface,
@@ -350,6 +379,9 @@ impl GpuState {
             sampler,
             default_texture,
             default_texture_view,
+            sample_count,
+            msaa_texture,
+            msaa_texture_view,
         })
     }
 
@@ -366,6 +398,24 @@ impl GpuState {
         self.uniforms.viewport[1] = height as f32;
         self.queue
             .write_buffer(&self._uniform_buffer, 0, bytemuck::bytes_of(&self.uniforms));
+
+        // Recreate MSAA texture with new size
+        self.msaa_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("msaa-texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: self.sample_count,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+
+        self.msaa_texture_view = self.msaa_texture.create_view(&wgpu::TextureViewDescriptor::default());
     }
 
 
@@ -394,8 +444,8 @@ impl GpuState {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shape-render-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
+                    view: &self.msaa_texture_view,
+                    resolve_target: Some(&view),
                     ops: wgpu::Operations {
                         load: if clear {
                             wgpu::LoadOp::Clear(wgpu::Color {

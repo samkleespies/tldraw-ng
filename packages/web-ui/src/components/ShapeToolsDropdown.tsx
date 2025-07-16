@@ -2,7 +2,7 @@ import { Component, createSignal, onMount, onCleanup } from 'solid-js';
 
 export interface ShapeToolsDropdownProps {
   selectedTool: string;
-  onToolChange: (tool: 'rectangle' | 'ellipse') => void;
+  onToolChange: (tool: 'rectangle' | 'ellipse' | 'draw') => void;
   disabled?: boolean;
 }
 
@@ -34,7 +34,7 @@ const ShapeToolsDropdown: Component<ShapeToolsDropdownProps> = (props) => {
     }
   };
 
-  const selectTool = (tool: 'rectangle' | 'ellipse') => {
+  const selectTool = (tool: 'rectangle' | 'ellipse' | 'draw') => {
     props.onToolChange(tool);
     setIsOpen(false);
   };
@@ -53,6 +53,15 @@ const ShapeToolsDropdown: Component<ShapeToolsDropdownProps> = (props) => {
           <circle cx="8" cy="8" r="4"/>
         </svg>
       );
+    } else if (props.selectedTool === 'draw') {
+      return (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 19l7-7 3 3-7 7-3-3z"/>
+          <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
+          <path d="M2 2l7.586 7.586"/>
+          <circle cx="11" cy="11" r="2"/>
+        </svg>
+      );
     } else {
       // Default to rectangle icon
       return (
@@ -64,15 +73,15 @@ const ShapeToolsDropdown: Component<ShapeToolsDropdownProps> = (props) => {
   };
 
   const isShapeToolSelected = () => {
-    return props.selectedTool === 'rectangle' || props.selectedTool === 'ellipse';
+    return props.selectedTool === 'rectangle' || props.selectedTool === 'ellipse' || props.selectedTool === 'draw';
   };
 
   return (
     <div class="shape-tools-dropdown" ref={dropdownRef}>
-      {/* Main button with caret */}
-      <div class="shape-tools-main">
+      {/* Unified button with caret */}
+      <div class={`shape-tools-main ${isShapeToolSelected() ? 'active' : ''}`}>
         <button
-          class={`tool-btn ${isShapeToolSelected() ? 'active' : ''}`}
+          class="tool-btn"
           onClick={toggleDropdown}
           disabled={props.disabled}
           title="Shape Tools"
@@ -85,7 +94,7 @@ const ShapeToolsDropdown: Component<ShapeToolsDropdownProps> = (props) => {
           disabled={props.disabled}
           title="More Shapes"
         >
-          <svg width="8" height="8" viewBox="0 0 16 16" fill="currentColor">
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
             <path d="M8 12L3 7h10l-5 5z"/>
           </svg>
         </button>
@@ -117,14 +126,17 @@ const ShapeToolsDropdown: Component<ShapeToolsDropdownProps> = (props) => {
               </svg>
             </button>
 
-            {/* Triangle - placeholder for future */}
+            {/* Draw Tool */}
             <button
-              class="shape-tool-item disabled"
-              disabled
-              title="Triangle (Coming Soon)"
+              class={`shape-tool-item ${props.selectedTool === 'draw' ? 'active' : ''}`}
+              onClick={() => selectTool('draw')}
+              title="Draw (D)"
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M12 2L22 20H2L12 2Z"/>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 19l7-7 3 3-7 7-3-3z"/>
+                <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
+                <path d="M2 2l7.586 7.586"/>
+                <circle cx="11" cy="11" r="2"/>
               </svg>
             </button>
 
