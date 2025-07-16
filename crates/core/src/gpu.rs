@@ -421,6 +421,8 @@ impl GpuState {
 
 
     pub fn render_shapes_with_textures(&mut self, vertices: &[Vertex], texture_data_urls: &[Option<String>], clear: bool) {
+
+
         // Handle empty vertex arrays gracefully
         if vertices.is_empty() && !clear {
             // Nothing to render and no clearing needed

@@ -138,6 +138,36 @@ const App: Component = () => {
   let currentDrawShapeId: number | null = null;
   let currentStrokeVertices: Float32Array | null = null;
 
+  // Animation frame for smooth drawing
+  let drawingAnimationFrame: number | null = null;
+
+  // Start drawing animation loop
+  const startDrawingLoop = () => {
+    if (drawingAnimationFrame !== null) return; // Already running
+
+    const renderLoop = () => {
+      if (isCurrentlyDrawing) {
+        const core = (window as any).whiteboardCore;
+        if (core) {
+          core.render_frame();
+        }
+        drawingAnimationFrame = requestAnimationFrame(renderLoop);
+      } else {
+        drawingAnimationFrame = null;
+      }
+    };
+
+    drawingAnimationFrame = requestAnimationFrame(renderLoop);
+  };
+
+  // Stop drawing animation loop
+  const stopDrawingLoop = () => {
+    if (drawingAnimationFrame !== null) {
+      cancelAnimationFrame(drawingAnimationFrame);
+      drawingAnimationFrame = null;
+    }
+  };
+
   onMount(() => {
     initializeWorker();
 
@@ -244,6 +274,9 @@ const App: Component = () => {
     //   worker.terminate();
     // }
     console.log('🧹 Removing event listeners...');
+
+    // Clean up drawing animation frame
+    stopDrawingLoop();
     window.removeEventListener('keydown', handleKeyDown);
     window.removeEventListener('mouseup', handleGlobalMouseUp);
     window.removeEventListener('paste', handlePaste);
@@ -555,6 +588,9 @@ const App: Component = () => {
           // Start drawing in Rust core
           core.start_drawing(msg.x, msg.y);
           console.log('🎨 Started smooth drawing at screen coords:', [msg.x, msg.y]);
+
+          // Start the drawing animation loop
+          startDrawingLoop();
         }
         break;
 
@@ -566,7 +602,7 @@ const App: Component = () => {
 
           // Add the point to the current drawing path in Rust
           core.add_draw_point(msg.x, msg.y);
-          core.render_frame();
+          // ✅ REMOVED: core.render_frame() - let animation frame handle rendering
         }
         break;
 
@@ -583,6 +619,11 @@ const App: Component = () => {
         currentDrawPoints = [];
         currentDrawShapeId = null;
         currentStrokeVertices = null;
+
+        // Stop the drawing animation loop
+        stopDrawingLoop();
+
+        // Final render to show completed shape
         core.render_frame();
         break;
     }

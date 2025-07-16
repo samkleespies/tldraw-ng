@@ -1383,6 +1383,8 @@ impl WhiteboardCore {
 
         let shape_id = self.current_draw_id?;
 
+
+
         // Reset drawing state
         self.is_drawing = false;
         self.current_draw_points.clear();
@@ -2339,6 +2341,9 @@ impl WhiteboardCore {
 
         // Split the borrow to avoid borrow checker issues
         let (vertices, texture_data_urls) = self.tessellate_shapes_with_textures();
+
+
+
         if let Some(gpu) = &mut self.gpu {
             gpu.render_shapes_with_textures(&vertices, &texture_data_urls, true);
         }
@@ -2358,6 +2363,8 @@ impl WhiteboardCore {
     fn tessellate_shapes_with_textures(&self) -> (Vec<Vertex>, Vec<Option<String>>) {
         let mut vertices = Vec::new();
         let mut texture_data_urls = Vec::new();
+
+
 
         // Clean up any widgets that might have accidentally gotten into selected_shapes
         // This is a safety measure to ensure widgets never show selection outlines
@@ -2387,7 +2394,6 @@ impl WhiteboardCore {
                 }
                 ShapeType::Draw { points, stroke_width } => {
                     // Render draw path as stroke line
-                    web_sys::console::log_1(&format!("🎨 Rendering draw shape with {} points, stroke_width: {}", points.len(), stroke_width).into());
                     self.tessellate_draw_path(&mut vertices, points, shape.color, *stroke_width);
                     // Add None for draw shapes (they don't need textures)
                     texture_data_urls.push(None);
@@ -3244,73 +3250,256 @@ impl WhiteboardCore {
             return;
         }
 
-        // Apply more aggressive smoothing to the input points
+        // Apply light smoothing to the input points
         let smoothed_points = self.smooth_path(points);
 
         if smoothed_points.len() < 2 {
             return;
         }
 
-        // Ensure good stroke width for visibility
-        let half_width = (stroke_width.max(5.0) / 2.0) as f32;
+        // Use proper stroke tessellation like tldraw
+        self.tessellate_smooth_stroke(vertices, &smoothed_points, color, stroke_width);
+    }
 
-        // Create overlapping line segments with proper joins to eliminate gaps
-        for i in 0..smoothed_points.len() - 1 {
-            let p1 = smoothed_points[i];
-            let p2 = smoothed_points[i + 1];
+    fn tessellate_smooth_stroke(&self, vertices: &mut Vec<Vertex>, points: &[Point], color: [f32; 4], stroke_width: f64) {
+        if points.len() < 2 {
+            return;
+        }
 
-            // Calculate direction vector
+        let half_width = (stroke_width / 2.0) as f32;
+
+        // Generate stroke quads between consecutive points
+        for i in 0..points.len() - 1 {
+            let p1 = points[i];
+            let p2 = points[i + 1];
+
+            // Calculate direction and perpendicular for this segment
             let dx = p2.x - p1.x;
             let dy = p2.y - p1.y;
             let length = (dx * dx + dy * dy).sqrt();
 
-            if length > 0.5 { // Skip very short segments
-                // Normalize direction
-                let dir_x = dx / length;
-                let dir_y = dy / length;
-
-                // Calculate perpendicular (normal) vector
-                let nx = -dir_y as f32 * half_width;
-                let ny = dir_x as f32 * half_width;
-
-                let x1 = p1.x as f32;
-                let y1 = p1.y as f32;
-                let x2 = p2.x as f32;
-                let y2 = p2.y as f32;
-
-                // Extend segments slightly to ensure overlap and eliminate gaps
-                let extend = half_width * 0.1; // Small extension
-                let ext_x = dir_x as f32 * extend;
-                let ext_y = dir_y as f32 * extend;
-
-                // Create quad for this line segment with slight extension
-                // First triangle
-                vertices.extend_from_slice(&[
-                    Vertex { position: [x1 + nx - ext_x, y1 + ny - ext_y], color, uv: [0.0, 0.0], shape_type: 0.0 },
-                    Vertex { position: [x1 - nx - ext_x, y1 - ny - ext_y], color, uv: [0.0, 1.0], shape_type: 0.0 },
-                    Vertex { position: [x2 + nx + ext_x, y2 + ny + ext_y], color, uv: [1.0, 0.0], shape_type: 0.0 },
-                ]);
-
-                // Second triangle
-                vertices.extend_from_slice(&[
-                    Vertex { position: [x1 - nx - ext_x, y1 - ny - ext_y], color, uv: [0.0, 1.0], shape_type: 0.0 },
-                    Vertex { position: [x2 - nx + ext_x, y2 - ny + ext_y], color, uv: [1.0, 1.0], shape_type: 0.0 },
-                    Vertex { position: [x2 + nx + ext_x, y2 + ny + ext_y], color, uv: [1.0, 0.0], shape_type: 0.0 },
-                ]);
-
-                // Add line joins at connection points to eliminate gaps
-                if i > 0 {
-                    self.tessellate_line_join(vertices, smoothed_points[i-1], p1, p2, half_width, color);
-                }
-
-                // Add rounded caps at the ends
-                if i == 0 {
-                    self.tessellate_round_cap(vertices, p1, nx, ny, color);
-                }
-                if i == smoothed_points.len() - 2 {
-                    self.tessellate_round_cap(vertices, p2, nx, ny, color);
-                }
+            if length < 0.001 {
+                continue; // Skip very short segments
             }
+
+            // Normalize direction
+            let dir_x = dx / length;
+            let dir_y = dy / length;
+
+            // Calculate perpendicular (normal) vector
+            let perp_x = -dir_y * half_width as f64;
+            let perp_y = dir_x * half_width as f64;
+
+            // Create quad vertices for this segment
+            let v1 = Vertex {
+                position: [(p1.x + perp_x) as f32, (p1.y + perp_y) as f32],
+                color,
+                uv: [0.0, 0.0],
+                shape_type: 0.0,
+            };
+            let v2 = Vertex {
+                position: [(p1.x - perp_x) as f32, (p1.y - perp_y) as f32],
+                color,
+                uv: [0.0, 1.0],
+                shape_type: 0.0,
+            };
+            let v3 = Vertex {
+                position: [(p2.x + perp_x) as f32, (p2.y + perp_y) as f32],
+                color,
+                uv: [1.0, 0.0],
+                shape_type: 0.0,
+            };
+            let v4 = Vertex {
+                position: [(p2.x - perp_x) as f32, (p2.y - perp_y) as f32],
+                color,
+                uv: [1.0, 1.0],
+                shape_type: 0.0,
+            };
+
+            // Add two triangles to form the quad
+            vertices.extend_from_slice(&[v1, v2, v3, v2, v4, v3]);
+        }
+
+        // Add round joins at segment connections
+        for i in 1..points.len() - 1 {
+            let p = points[i];
+            self.tessellate_round_join(vertices, p, half_width, color);
+        }
+
+        // Add round caps at the ends with proper direction
+        if points.len() >= 2 {
+            // Start cap
+            let start_dir = {
+                let p1 = points[0];
+                let p2 = points[1];
+                let dx = p2.x - p1.x;
+                let dy = p2.y - p1.y;
+                let len = (dx * dx + dy * dy).sqrt();
+                if len > 0.0 { (-dx / len, -dy / len) } else { (-1.0, 0.0) }
+            };
+            self.tessellate_directional_cap(vertices, points[0], start_dir, half_width, color);
+
+            // End cap
+            let end_dir = {
+                let len = points.len();
+                let p1 = points[len - 2];
+                let p2 = points[len - 1];
+                let dx = p2.x - p1.x;
+                let dy = p2.y - p1.y;
+                let len = (dx * dx + dy * dy).sqrt();
+                if len > 0.0 { (dx / len, dy / len) } else { (1.0, 0.0) }
+            };
+            self.tessellate_directional_cap(vertices, points[points.len() - 1], end_dir, half_width, color);
+        }
+    }
+
+    fn get_point_direction(&self, points: &[Point], index: usize) -> (f64, f64) {
+        if points.len() < 2 {
+            return (1.0, 0.0);
+        }
+
+        if index == 0 {
+            // First point: use direction to next point
+            let next = points[1];
+            let curr = points[0];
+            let dx = next.x - curr.x;
+            let dy = next.y - curr.y;
+            let len = (dx * dx + dy * dy).sqrt();
+            if len > 0.0 { (dx / len, dy / len) } else { (1.0, 0.0) }
+        } else if index == points.len() - 1 {
+            // Last point: use direction from previous point
+            let curr = points[index];
+            let prev = points[index - 1];
+            let dx = curr.x - prev.x;
+            let dy = curr.y - prev.y;
+            let len = (dx * dx + dy * dy).sqrt();
+            if len > 0.0 { (dx / len, dy / len) } else { (1.0, 0.0) }
+        } else {
+            // Middle point: average of incoming and outgoing directions
+            let prev = points[index - 1];
+            let curr = points[index];
+            let next = points[index + 1];
+
+            let dx1 = curr.x - prev.x;
+            let dy1 = curr.y - prev.y;
+            let len1 = (dx1 * dx1 + dy1 * dy1).sqrt();
+
+            let dx2 = next.x - curr.x;
+            let dy2 = next.y - curr.y;
+            let len2 = (dx2 * dx2 + dy2 * dy2).sqrt();
+
+            let (dir1_x, dir1_y) = if len1 > 0.0 { (dx1 / len1, dy1 / len1) } else { (0.0, 0.0) };
+            let (dir2_x, dir2_y) = if len2 > 0.0 { (dx2 / len2, dy2 / len2) } else { (0.0, 0.0) };
+
+            let avg_x = (dir1_x + dir2_x) / 2.0;
+            let avg_y = (dir1_y + dir2_y) / 2.0;
+            let avg_len = (avg_x * avg_x + avg_y * avg_y).sqrt();
+
+            if avg_len > 0.0 { (avg_x / avg_len, avg_y / avg_len) } else { (1.0, 0.0) }
+        }
+    }
+
+    fn tessellate_round_join(&self, vertices: &mut Vec<Vertex>, center: Point, radius: f32, color: [f32; 4]) {
+        let segments = 8; // Number of segments for the round join
+        let angle_step = 2.0 * std::f32::consts::PI / segments as f32;
+
+        for i in 0..segments {
+            let angle1 = i as f32 * angle_step;
+            let angle2 = (i + 1) as f32 * angle_step;
+
+            let x1 = center.x as f32 + radius * angle1.cos();
+            let y1 = center.y as f32 + radius * angle1.sin();
+            let x2 = center.x as f32 + radius * angle2.cos();
+            let y2 = center.y as f32 + radius * angle2.sin();
+
+            vertices.extend_from_slice(&[
+                Vertex {
+                    position: [center.x as f32, center.y as f32],
+                    color,
+                    uv: [0.5, 0.5],
+                    shape_type: 0.0,
+                },
+                Vertex {
+                    position: [x1, y1],
+                    color,
+                    uv: [0.0, 0.0],
+                    shape_type: 0.0,
+                },
+                Vertex {
+                    position: [x2, y2],
+                    color,
+                    uv: [1.0, 1.0],
+                    shape_type: 0.0,
+                },
+            ]);
+        }
+    }
+
+    fn tessellate_directional_cap(&self, vertices: &mut Vec<Vertex>, center: Point, direction: (f64, f64), radius: f32, color: [f32; 4]) {
+        let segments = 8; // Number of segments for the round cap
+
+        // Calculate the base angle from the direction
+        let base_angle = direction.1.atan2(direction.0) as f32;
+
+        // Create a semicircle perpendicular to the stroke direction
+        let angle_step = std::f32::consts::PI / segments as f32;
+        let start_angle = base_angle - std::f32::consts::PI / 2.0;
+
+        for i in 0..segments {
+            let angle1 = start_angle + i as f32 * angle_step;
+            let angle2 = start_angle + (i + 1) as f32 * angle_step;
+
+            let x1 = center.x as f32 + radius * angle1.cos();
+            let y1 = center.y as f32 + radius * angle1.sin();
+            let x2 = center.x as f32 + radius * angle2.cos();
+            let y2 = center.y as f32 + radius * angle2.sin();
+
+            vertices.extend_from_slice(&[
+                Vertex {
+                    position: [center.x as f32, center.y as f32],
+                    color,
+                    uv: [0.5, 0.5],
+                    shape_type: 0.0,
+                },
+                Vertex {
+                    position: [x1, y1],
+                    color,
+                    uv: [0.0, 0.0],
+                    shape_type: 0.0,
+                },
+                Vertex {
+                    position: [x2, y2],
+                    color,
+                    uv: [1.0, 1.0],
+                    shape_type: 0.0,
+                },
+            ]);
+        }
+    }
+
+
+
+    fn tessellate_tiny_join(&self, vertices: &mut Vec<Vertex>, center: Point, radius: f32, color: [f32; 4]) {
+        // Create a very small circular join to fill tiny gaps
+        let cx = center.x as f32;
+        let cy = center.y as f32;
+
+        // Very simple 4-triangle circle
+        let segments = 4;
+        for i in 0..segments {
+            let angle1 = (i as f32 / segments as f32) * std::f32::consts::PI * 2.0;
+            let angle2 = ((i + 1) as f32 / segments as f32) * std::f32::consts::PI * 2.0;
+
+            let x1 = cx + radius * angle1.cos();
+            let y1 = cy + radius * angle1.sin();
+            let x2 = cx + radius * angle2.cos();
+            let y2 = cy + radius * angle2.sin();
+
+            vertices.extend_from_slice(&[
+                Vertex { position: [cx, cy], color, uv: [0.5, 0.5], shape_type: 0.0 },
+                Vertex { position: [x1, y1], color, uv: [0.0, 0.0], shape_type: 0.0 },
+                Vertex { position: [x2, y2], color, uv: [1.0, 0.0], shape_type: 0.0 },
+            ]);
         }
     }
 
@@ -3319,11 +3508,24 @@ impl WhiteboardCore {
             return points.to_vec();
         }
 
+        // Calculate initial statistics
+        let mut initial_distances = Vec::new();
+        for i in 0..points.len() - 1 {
+            let dx = points[i + 1].x - points[i].x;
+            let dy = points[i + 1].y - points[i].y;
+            initial_distances.push((dx * dx + dy * dy).sqrt());
+        }
+        let initial_max_gap = initial_distances.iter().fold(0.0f64, |a, &b| a.max(b));
+        let initial_avg_gap = initial_distances.iter().sum::<f64>() / initial_distances.len() as f64;
+
+        web_sys::console::log_1(&format!("  🔧 SMOOTHING ANALYSIS:").into());
+        web_sys::console::log_1(&format!("    Before smoothing - Max gap: {:.2}, Avg gap: {:.2}", initial_max_gap, initial_avg_gap).into());
+
         // Apply multiple passes of smoothing for better results
         let mut smoothed = points.to_vec();
 
         // Apply 3 passes of smoothing for much smoother lines
-        for _pass in 0..3 {
+        for pass in 0..3 {
             let mut new_smoothed = Vec::with_capacity(smoothed.len());
             new_smoothed.push(smoothed[0]); // Keep first point
 
@@ -3342,6 +3544,18 @@ impl WhiteboardCore {
 
             new_smoothed.push(smoothed[smoothed.len() - 1]); // Keep last point
             smoothed = new_smoothed;
+
+            // Calculate distances after this pass
+            let mut pass_distances = Vec::new();
+            for i in 0..smoothed.len() - 1 {
+                let dx = smoothed[i + 1].x - smoothed[i].x;
+                let dy = smoothed[i + 1].y - smoothed[i].y;
+                pass_distances.push((dx * dx + dy * dy).sqrt());
+            }
+            let pass_max_gap = pass_distances.iter().fold(0.0f64, |a, &b| a.max(b));
+            let pass_avg_gap = pass_distances.iter().sum::<f64>() / pass_distances.len() as f64;
+
+            web_sys::console::log_1(&format!("    Pass {} - Max gap: {:.2}, Avg gap: {:.2}", pass + 1, pass_max_gap, pass_avg_gap).into());
         }
 
         smoothed
@@ -3378,37 +3592,29 @@ impl WhiteboardCore {
         }
     }
 
-    fn tessellate_line_join(&self, vertices: &mut Vec<Vertex>, p0: Point, p1: Point, p2: Point, half_width: f32, color: [f32; 4]) {
-        // Create a smooth join between two line segments to eliminate gaps
-        let dx1 = p1.x - p0.x;
-        let dy1 = p1.y - p0.y;
-        let len1 = (dx1 * dx1 + dy1 * dy1).sqrt();
+    fn tessellate_simple_round_join(&self, vertices: &mut Vec<Vertex>, center: Point, half_width: f32, color: [f32; 4]) {
+        // Create a simple round join that just fills gaps without artifacts
+        let cx = center.x as f32;
+        let cy = center.y as f32;
 
-        let dx2 = p2.x - p1.x;
-        let dy2 = p2.y - p1.y;
-        let len2 = (dx2 * dx2 + dy2 * dy2).sqrt();
+        // Create a small circular join with fewer segments to avoid artifacts
+        let segments = 8;
+        let radius = half_width * 0.9; // Slightly smaller to avoid overlaps
 
-        if len1 > 0.0 && len2 > 0.0 {
-            let cx = p1.x as f32;
-            let cy = p1.y as f32;
+        for i in 0..segments {
+            let angle1 = (i as f32 / segments as f32) * std::f32::consts::PI * 2.0;
+            let angle2 = ((i + 1) as f32 / segments as f32) * std::f32::consts::PI * 2.0;
 
-            // Create a small circular join to fill any gaps
-            let segments = 4;
-            for i in 0..segments {
-                let angle1 = (i as f32 / segments as f32) * std::f32::consts::PI * 2.0;
-                let angle2 = ((i + 1) as f32 / segments as f32) * std::f32::consts::PI * 2.0;
+            let x1 = cx + radius * angle1.cos();
+            let y1 = cy + radius * angle1.sin();
+            let x2 = cx + radius * angle2.cos();
+            let y2 = cy + radius * angle2.sin();
 
-                let x1 = cx + half_width * 0.8 * angle1.cos();
-                let y1 = cy + half_width * 0.8 * angle1.sin();
-                let x2 = cx + half_width * 0.8 * angle2.cos();
-                let y2 = cy + half_width * 0.8 * angle2.sin();
-
-                vertices.extend_from_slice(&[
-                    Vertex { position: [cx, cy], color, uv: [0.5, 0.5], shape_type: 0.0 },
-                    Vertex { position: [x1, y1], color, uv: [0.0, 0.0], shape_type: 0.0 },
-                    Vertex { position: [x2, y2], color, uv: [1.0, 0.0], shape_type: 0.0 },
-                ]);
-            }
+            vertices.extend_from_slice(&[
+                Vertex { position: [cx, cy], color, uv: [0.5, 0.5], shape_type: 0.0 },
+                Vertex { position: [x1, y1], color, uv: [0.0, 0.0], shape_type: 0.0 },
+                Vertex { position: [x2, y2], color, uv: [1.0, 0.0], shape_type: 0.0 },
+            ]);
         }
     }
 
