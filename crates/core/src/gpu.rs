@@ -125,10 +125,17 @@ impl GpuState {
         });
 
         // Create the surface targeting the provided OffscreenCanvas.
+        #[cfg(target_arch = "wasm32")]
         let surface = instance.create_surface(wgpu::SurfaceTarget::OffscreenCanvas(canvas.clone()))
             .map_err(|e| JsValue::from_str(&format!("Failed to create surface: {e}")))?;
 
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            return Err(JsValue::from_str("OffscreenCanvas is only supported on WASM target"));
+        }
+
         // Request adapter.
+        #[cfg(target_arch = "wasm32")]
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
@@ -139,6 +146,7 @@ impl GpuState {
             .map_err(|e| JsValue::from_str(&format!("Failed to find suitable adapter: {e}")))?;
 
         // Request device + queue.
+        #[cfg(target_arch = "wasm32")]
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("whiteboard-device"),
@@ -154,10 +162,14 @@ impl GpuState {
             .await
             .map_err(|e| JsValue::from_str(&format!("Request device failed: {e}")))?;
 
+        #[cfg(target_arch = "wasm32")]
         let width = canvas.width();
+        #[cfg(target_arch = "wasm32")]
         let height = canvas.height();
 
+        #[cfg(target_arch = "wasm32")]
         let caps = surface.get_capabilities(&adapter);
+        #[cfg(target_arch = "wasm32")]
         let format = caps
             .formats
             .iter()
@@ -165,6 +177,7 @@ impl GpuState {
             .find(|f| f.is_srgb())
             .unwrap_or(caps.formats[0]);
 
+        #[cfg(target_arch = "wasm32")]
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -176,9 +189,11 @@ impl GpuState {
             desired_maximum_frame_latency: 2,
         };
 
+        #[cfg(target_arch = "wasm32")]
         surface.configure(&device, &config);
 
         // ---- Create sampler for texture sampling ----
+        #[cfg(target_arch = "wasm32")]
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("image-sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -191,6 +206,7 @@ impl GpuState {
         });
 
         // ---- Create default 1x1 white texture for non-image shapes ----
+        #[cfg(target_arch = "wasm32")]
         let default_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("default-texture"),
             size: wgpu::Extent3d {
@@ -207,6 +223,7 @@ impl GpuState {
         });
 
         // Upload white pixel data to default texture
+        #[cfg(target_arch = "wasm32")]
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &default_texture,
@@ -227,9 +244,11 @@ impl GpuState {
             },
         );
 
+        #[cfg(target_arch = "wasm32")]
         let default_texture_view = default_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // ---- Uniform buffer / bind group ----
+        #[cfg(target_arch = "wasm32")]
         let uniforms = Uniforms {
             view_proj: [
                 [1.0, 0.0, 0.0, 0.0],
@@ -241,12 +260,14 @@ impl GpuState {
             camera: [0.0, 0.0, 1.0, 0.0],
         };
 
+        #[cfg(target_arch = "wasm32")]
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("uniform-buffer"),
             contents: bytemuck::bytes_of(&uniforms),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
+        #[cfg(target_arch = "wasm32")]
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("bind-group-layout"),
             entries: &[
@@ -447,6 +468,7 @@ impl GpuState {
                 label: Some("shape-render-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &self.msaa_texture_view,
+                    depth_slice: None,
                     resolve_target: Some(&view),
                     ops: wgpu::Operations {
                         load: if clear {

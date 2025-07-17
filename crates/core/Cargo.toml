@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # WebGPU rendering
-wgpu = { version = "25.0", features = ["webgl"] }
+wgpu = { version = "26.0", features = ["webgl", "web"] }
 lyon = { version = "1.0" }
 bytemuck = { version = "1.16", features = ["derive"] }
 

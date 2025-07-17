@@ -1502,7 +1502,7 @@ impl WhiteboardCore {
                                     [0.0, 0.0]
                                 };
 
-                                let shape_type = js_sys::Reflect::get(&vertex_obj, &"shape_type".into())
+                                let _shape_type = js_sys::Reflect::get(&vertex_obj, &"shape_type".into())
                                     .ok()
                                     .and_then(|v| v.as_f64())
                                     .unwrap_or(0.0) as f32;
@@ -1567,7 +1567,7 @@ impl WhiteboardCore {
 
         if let Some(shape) = self.shapes.get_mut(&id) {
             // Check if this is a pre-triangulated shape
-            if let ShapeType::DrawPreTriangulated { vertices: ref mut shape_vertices, bounding_points: ref mut bounding_points } = &mut shape.shape_type {
+            if let ShapeType::DrawPreTriangulated { vertices: ref mut shape_vertices, ref mut bounding_points } = &mut shape.shape_type {
                 // Convert the pre-triangulated vertices from JavaScript (same as create_smooth_draw_shape)
                 let mut vertices = Vec::new();
                 let mut positions = Vec::new();
@@ -2590,102 +2590,11 @@ impl WhiteboardCore {
         BoundingBox::new(min_x, min_y, max_x, max_y)
     }
 
-    fn tessellate_smooth_polygon(&self, vertices: &mut Vec<Vertex>, points: &[Point], color: [f32; 4]) {
-        if points.len() < 4 {
-            return;
-        }
 
-        // The debug output shows that perfect-freehand creates a proper stroke outline
-        // We need to tessellate this outline as a closed polygon, not as curves
-        // The issue was that I was trying to create curves when the outline IS the shape
 
-        // Use proper polygon tessellation - the outline points form the boundary
-        self.tessellate_polygon_outline(vertices, points, color);
-    }
 
-    fn create_smooth_path_from_outline(&self, points: &[Point]) -> Vec<Point> {
-        if points.len() < 4 {
-            return points.to_vec();
-        }
 
-        let mut path_points = Vec::new();
 
-        // Start with the first point
-        path_points.push(points[0]);
-
-        // Create smooth curves using the same algorithm as getSvgPathFromStroke
-        let mut a = points[0];
-        let mut b = points[1];
-        let c = points[2];
-
-        // Add the first quadratic curve control point
-        path_points.push(b);
-        path_points.push(Point {
-            x: (b.x + c.x) / 2.0,
-            y: (b.y + c.y) / 2.0,
-        });
-
-        // Add smooth curve points for the rest
-        for i in 2..(points.len() - 1) {
-            a = points[i];
-            b = points[i + 1];
-
-            // Add the averaged point (this creates the smooth curves)
-            path_points.push(Point {
-                x: (a.x + b.x) / 2.0,
-                y: (a.y + b.y) / 2.0,
-            });
-        }
-
-        // Close the path
-        if points.len() > 3 {
-            path_points.push(points[0]);
-        }
-
-        path_points
-    }
-
-    fn tessellate_smooth_path(&self, vertices: &mut Vec<Vertex>, path_points: &[Point], color: [f32; 4]) {
-        if path_points.len() < 3 {
-            return;
-        }
-
-        // Use fan triangulation from centroid for the smooth path
-        let mut centroid = Point { x: 0.0, y: 0.0 };
-        for point in path_points {
-            centroid.x += point.x;
-            centroid.y += point.y;
-        }
-        centroid.x /= path_points.len() as f64;
-        centroid.y /= path_points.len() as f64;
-
-        // Create triangles from centroid to each edge
-        for i in 0..path_points.len() {
-            let p1 = path_points[i];
-            let p2 = path_points[(i + 1) % path_points.len()];
-
-            vertices.extend_from_slice(&[
-                Vertex {
-                    position: [centroid.x as f32, centroid.y as f32],
-                    color,
-                    uv: [0.5, 0.5],
-                    shape_type: 0.0
-                },
-                Vertex {
-                    position: [p1.x as f32, p1.y as f32],
-                    color,
-                    uv: [0.0, 0.0],
-                    shape_type: 0.0
-                },
-                Vertex {
-                    position: [p2.x as f32, p2.y as f32],
-                    color,
-                    uv: [1.0, 0.0],
-                    shape_type: 0.0
-                },
-            ]);
-        }
-    }
 
     fn tessellate_polygon_outline(&self, vertices: &mut Vec<Vertex>, points: &[Point], color: [f32; 4]) {
         if points.len() < 3 {
@@ -2837,31 +2746,7 @@ impl WhiteboardCore {
         true
     }
 
-    fn is_ear(&self, points: &[Point], index: usize) -> bool {
-        let n = points.len();
-        let prev = points[(index + n - 1) % n];
-        let curr = points[index];
-        let next = points[(index + 1) % n];
 
-        // Check if the angle is convex (cross product test)
-        let cross = (curr.x - prev.x) * (next.y - prev.y) - (curr.y - prev.y) * (next.x - prev.x);
-        if cross <= 0.0 {
-            return false; // Not convex
-        }
-
-        // Check if any other point is inside this triangle
-        for i in 0..n {
-            if i == index || i == (index + n - 1) % n || i == (index + 1) % n {
-                continue;
-            }
-
-            if self.point_in_triangle(points[i], prev, curr, next) {
-                return false;
-            }
-        }
-
-        true
-    }
 
     fn point_in_triangle(&self, p: Point, a: Point, b: Point, c: Point) -> bool {
         let denom = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y);
@@ -2876,32 +2761,7 @@ impl WhiteboardCore {
         alpha > 0.0 && beta > 0.0 && gamma > 0.0
     }
 
-    fn triangulate_polygon(&self, points: &[Point]) -> Vec<[Point; 3]> {
-        let mut triangles = Vec::new();
 
-        if points.len() < 3 {
-            return triangles;
-        }
-
-        // For now, use a simple fan triangulation from the centroid
-        // This should work better than fan from first vertex
-        let mut centroid = Point { x: 0.0, y: 0.0 };
-        for point in points {
-            centroid.x += point.x;
-            centroid.y += point.y;
-        }
-        centroid.x /= points.len() as f64;
-        centroid.y /= points.len() as f64;
-
-        // Create triangles from centroid to each edge
-        for i in 0..points.len() {
-            let p1 = points[i];
-            let p2 = points[(i + 1) % points.len()];
-            triangles.push([centroid, p1, p2]);
-        }
-
-        triangles
-    }
 
     fn tessellate_consistent_line(&self, vertices: &mut Vec<Vertex>, points: &[Point], color: [f32; 4], stroke_width: f64) {
         if points.len() < 2 {
@@ -2985,56 +2845,7 @@ impl WhiteboardCore {
         }
     }
 
-    fn tessellate_perfect_freehand_polygon(&self, vertices: &mut Vec<Vertex>, points: &[Point], color: [f32; 4]) {
-        if points.len() < 3 {
-            return;
-        }
 
-        // Perfect-freehand gives us outline points that form a closed polygon
-        // We need to tessellate this polygon properly
-
-        // Use ear clipping algorithm for proper polygon tessellation
-        // For now, use a simple approach that works well for convex-ish polygons
-
-        // Find a good center point for fan triangulation
-        // Use the centroid of the polygon
-        let mut centroid_x = 0.0;
-        let mut centroid_y = 0.0;
-        for point in points {
-            centroid_x += point.x;
-            centroid_y += point.y;
-        }
-        centroid_x /= points.len() as f64;
-        centroid_y /= points.len() as f64;
-
-        // Create triangles from centroid to each edge of the polygon
-        for i in 0..points.len() {
-            let p1 = points[i];
-            let p2 = points[(i + 1) % points.len()];
-
-            // Create triangle: centroid -> p1 -> p2
-            vertices.extend_from_slice(&[
-                Vertex {
-                    position: [centroid_x as f32, centroid_y as f32],
-                    color,
-                    uv: [0.5, 0.5],
-                    shape_type: 0.0
-                },
-                Vertex {
-                    position: [p1.x as f32, p1.y as f32],
-                    color,
-                    uv: [0.0, 0.0],
-                    shape_type: 0.0
-                },
-                Vertex {
-                    position: [p2.x as f32, p2.y as f32],
-                    color,
-                    uv: [1.0, 0.0],
-                    shape_type: 0.0
-                },
-            ]);
-        }
-    }
 
     fn tessellate_thin_line(&self, vertices: &mut Vec<Vertex>, points: &[Point], color: [f32; 4], stroke_width: f64) {
         if points.len() < 2 {
@@ -3120,54 +2931,7 @@ impl WhiteboardCore {
         }
     }
 
-    fn tessellate_stroke_polygon(&self, vertices: &mut Vec<Vertex>, points: &[Point], color: [f32; 4]) {
-        if points.len() < 3 {
-            return;
-        }
 
-        // Use earcut-style triangulation for smooth polygon rendering
-        // This is much better than fan triangulation for complex shapes
-
-        // Simple triangulation for now - we can improve this later with proper earcut
-        // For perfect-freehand outlines, fan triangulation from centroid usually works well
-
-        // Calculate centroid
-        let mut centroid_x = 0.0;
-        let mut centroid_y = 0.0;
-        for point in points {
-            centroid_x += point.x;
-            centroid_y += point.y;
-        }
-        centroid_x /= points.len() as f64;
-        centroid_y /= points.len() as f64;
-
-        // Create triangles from centroid to each edge
-        for i in 0..points.len() {
-            let p1 = points[i];
-            let p2 = points[(i + 1) % points.len()];
-
-            vertices.extend_from_slice(&[
-                Vertex {
-                    position: [centroid_x as f32, centroid_y as f32],
-                    color,
-                    uv: [0.5, 0.5],
-                    shape_type: 0.0
-                },
-                Vertex {
-                    position: [p1.x as f32, p1.y as f32],
-                    color,
-                    uv: [0.0, 0.0],
-                    shape_type: 0.0
-                },
-                Vertex {
-                    position: [p2.x as f32, p2.y as f32],
-                    color,
-                    uv: [1.0, 0.0],
-                    shape_type: 0.0
-                },
-            ]);
-        }
-    }
 
     fn tessellate_smooth_line(&self, vertices: &mut Vec<Vertex>, points: &[Point], color: [f32; 4], stroke_width: f64) {
         if points.len() < 2 {
@@ -3255,43 +3019,7 @@ impl WhiteboardCore {
         }
     }
 
-    fn tessellate_draw_polygon(&self, vertices: &mut Vec<Vertex>, points: &[Point], color: [f32; 4]) {
-        if points.len() < 3 {
-            return;
-        }
 
-        // Perfect-freehand gives us stroke outline points, we need to fill the stroke shape
-        // Use fan triangulation to fill the stroke polygon properly
-        let center_x = points.iter().map(|p| p.x).sum::<f64>() / points.len() as f64;
-        let center_y = points.iter().map(|p| p.y).sum::<f64>() / points.len() as f64;
-
-        for i in 0..points.len() {
-            let p1 = points[i];
-            let p2 = points[(i + 1) % points.len()]; // Wrap around to close the polygon
-
-            // Create triangle from center to edge
-            vertices.extend_from_slice(&[
-                Vertex {
-                    position: [center_x as f32, center_y as f32],
-                    color,
-                    uv: [0.5, 0.5],
-                    shape_type: 0.0
-                },
-                Vertex {
-                    position: [p1.x as f32, p1.y as f32],
-                    color,
-                    uv: [0.0, 0.0],
-                    shape_type: 0.0
-                },
-                Vertex {
-                    position: [p2.x as f32, p2.y as f32],
-                    color,
-                    uv: [1.0, 0.0],
-                    shape_type: 0.0
-                },
-            ]);
-        }
-    }
 
     fn tessellate_draw_path(&self, vertices: &mut Vec<Vertex>, points: &[Point], color: [f32; 4], stroke_width: f64) {
         if points.len() < 2 {
@@ -3401,51 +3129,7 @@ impl WhiteboardCore {
         }
     }
 
-    fn get_point_direction(&self, points: &[Point], index: usize) -> (f64, f64) {
-        if points.len() < 2 {
-            return (1.0, 0.0);
-        }
 
-        if index == 0 {
-            // First point: use direction to next point
-            let next = points[1];
-            let curr = points[0];
-            let dx = next.x - curr.x;
-            let dy = next.y - curr.y;
-            let len = (dx * dx + dy * dy).sqrt();
-            if len > 0.0 { (dx / len, dy / len) } else { (1.0, 0.0) }
-        } else if index == points.len() - 1 {
-            // Last point: use direction from previous point
-            let curr = points[index];
-            let prev = points[index - 1];
-            let dx = curr.x - prev.x;
-            let dy = curr.y - prev.y;
-            let len = (dx * dx + dy * dy).sqrt();
-            if len > 0.0 { (dx / len, dy / len) } else { (1.0, 0.0) }
-        } else {
-            // Middle point: average of incoming and outgoing directions
-            let prev = points[index - 1];
-            let curr = points[index];
-            let next = points[index + 1];
-
-            let dx1 = curr.x - prev.x;
-            let dy1 = curr.y - prev.y;
-            let len1 = (dx1 * dx1 + dy1 * dy1).sqrt();
-
-            let dx2 = next.x - curr.x;
-            let dy2 = next.y - curr.y;
-            let len2 = (dx2 * dx2 + dy2 * dy2).sqrt();
-
-            let (dir1_x, dir1_y) = if len1 > 0.0 { (dx1 / len1, dy1 / len1) } else { (0.0, 0.0) };
-            let (dir2_x, dir2_y) = if len2 > 0.0 { (dx2 / len2, dy2 / len2) } else { (0.0, 0.0) };
-
-            let avg_x = (dir1_x + dir2_x) / 2.0;
-            let avg_y = (dir1_y + dir2_y) / 2.0;
-            let avg_len = (avg_x * avg_x + avg_y * avg_y).sqrt();
-
-            if avg_len > 0.0 { (avg_x / avg_len, avg_y / avg_len) } else { (1.0, 0.0) }
-        }
-    }
 
     fn tessellate_round_join(&self, vertices: &mut Vec<Vertex>, center: Point, radius: f32, color: [f32; 4]) {
         let segments = 8; // Number of segments for the round join
@@ -3527,29 +3211,7 @@ impl WhiteboardCore {
 
 
 
-    fn tessellate_tiny_join(&self, vertices: &mut Vec<Vertex>, center: Point, radius: f32, color: [f32; 4]) {
-        // Create a very small circular join to fill tiny gaps
-        let cx = center.x as f32;
-        let cy = center.y as f32;
 
-        // Very simple 4-triangle circle
-        let segments = 4;
-        for i in 0..segments {
-            let angle1 = (i as f32 / segments as f32) * std::f32::consts::PI * 2.0;
-            let angle2 = ((i + 1) as f32 / segments as f32) * std::f32::consts::PI * 2.0;
-
-            let x1 = cx + radius * angle1.cos();
-            let y1 = cy + radius * angle1.sin();
-            let x2 = cx + radius * angle2.cos();
-            let y2 = cy + radius * angle2.sin();
-
-            vertices.extend_from_slice(&[
-                Vertex { position: [cx, cy], color, uv: [0.5, 0.5], shape_type: 0.0 },
-                Vertex { position: [x1, y1], color, uv: [0.0, 0.0], shape_type: 0.0 },
-                Vertex { position: [x2, y2], color, uv: [1.0, 0.0], shape_type: 0.0 },
-            ]);
-        }
-    }
 
     fn smooth_path(&self, points: &[Point]) -> Vec<Point> {
         if points.len() <= 2 {
@@ -3611,60 +3273,9 @@ impl WhiteboardCore {
 
 
 
-    fn tessellate_round_cap(&self, vertices: &mut Vec<Vertex>, center: Point, nx: f32, ny: f32, color: [f32; 4]) {
-        let cx = center.x as f32;
-        let cy = center.y as f32;
 
-        // Create a simple rounded cap using a few triangles
-        let segments = 6; // Number of segments for the cap
-        let angle_step = std::f32::consts::PI / segments as f32;
 
-        for i in 0..segments {
-            let angle1 = i as f32 * angle_step;
-            let angle2 = (i + 1) as f32 * angle_step;
 
-            let radius = (nx * nx + ny * ny).sqrt();
-            let base_angle = ny.atan2(nx);
-
-            let x1 = cx + radius * (base_angle + angle1).cos();
-            let y1 = cy + radius * (base_angle + angle1).sin();
-            let x2 = cx + radius * (base_angle + angle2).cos();
-            let y2 = cy + radius * (base_angle + angle2).sin();
-
-            // Triangle for cap segment
-            vertices.extend_from_slice(&[
-                Vertex { position: [cx, cy], color, uv: [0.5, 0.5], shape_type: 0.0 },
-                Vertex { position: [x1, y1], color, uv: [0.0, 0.0], shape_type: 0.0 },
-                Vertex { position: [x2, y2], color, uv: [1.0, 0.0], shape_type: 0.0 },
-            ]);
-        }
-    }
-
-    fn tessellate_simple_round_join(&self, vertices: &mut Vec<Vertex>, center: Point, half_width: f32, color: [f32; 4]) {
-        // Create a simple round join that just fills gaps without artifacts
-        let cx = center.x as f32;
-        let cy = center.y as f32;
-
-        // Create a small circular join with fewer segments to avoid artifacts
-        let segments = 8;
-        let radius = half_width * 0.9; // Slightly smaller to avoid overlaps
-
-        for i in 0..segments {
-            let angle1 = (i as f32 / segments as f32) * std::f32::consts::PI * 2.0;
-            let angle2 = ((i + 1) as f32 / segments as f32) * std::f32::consts::PI * 2.0;
-
-            let x1 = cx + radius * angle1.cos();
-            let y1 = cy + radius * angle1.sin();
-            let x2 = cx + radius * angle2.cos();
-            let y2 = cy + radius * angle2.sin();
-
-            vertices.extend_from_slice(&[
-                Vertex { position: [cx, cy], color, uv: [0.5, 0.5], shape_type: 0.0 },
-                Vertex { position: [x1, y1], color, uv: [0.0, 0.0], shape_type: 0.0 },
-                Vertex { position: [x2, y2], color, uv: [1.0, 0.0], shape_type: 0.0 },
-            ]);
-        }
-    }
 
     fn tessellate_rectangle_outline(&self, vertices: &mut Vec<Vertex>, pos: Point, width: f64, height: f64, color: [f32; 4], outline_width: f32) {
         let x = pos.x as f32;
