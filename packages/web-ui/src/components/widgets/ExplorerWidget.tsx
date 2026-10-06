@@ -1,4 +1,4 @@
-import { Component, createSignal, onMount, For, createRoot } from 'solid-js';
+import { Component, createSignal, onMount, For } from 'solid-js';
 import { useWidgetLinking } from '../../context/WidgetLinkingContext';
 
 export interface FileNode {

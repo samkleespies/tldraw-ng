@@ -44,7 +44,7 @@ export const TerminalWidget: Component<TerminalWidgetProps> = (props) => {
           foreground: '#cccccc',
           cursor: '#ffffff',
           cursorAccent: '#000000',
-          selection: '#3a3d41',
+          selectionBackground: '#3a3d41',
           black: '#000000',
           red: '#f48771',
           green: '#a9dc76',
@@ -69,7 +69,6 @@ export const TerminalWidget: Component<TerminalWidgetProps> = (props) => {
         cursorStyle: 'block',
         scrollback: 1000,
         tabStopWidth: 4,
-        bellStyle: 'none',
         allowTransparency: true,
         convertEol: true,
         disableStdin: false,
@@ -79,9 +78,7 @@ export const TerminalWidget: Component<TerminalWidgetProps> = (props) => {
         fastScrollSensitivity: 5,
         scrollSensitivity: 1,
         // Ensure scrolling behavior keeps current line visible
-        scrollOnUserInput: true,
         // Make sure the terminal scrolls to bottom when new content is added
-        scrollToBottom: true
       });
 
       // Add addons
@@ -101,8 +98,8 @@ export const TerminalWidget: Component<TerminalWidgetProps> = (props) => {
       });
 
       // Set up key handling
-      terminal.onKey(({ key, domEvent }) => {
-        handleTerminalKey(key, domEvent);
+      terminal.onKey(({ domEvent }) => {
+        handleTerminalKey(domEvent);
       });
 
       // Welcome message
@@ -196,7 +193,7 @@ export const TerminalWidget: Component<TerminalWidgetProps> = (props) => {
   /**
    * Handle terminal key events
    */
-  const handleTerminalKey = (key: string, domEvent: KeyboardEvent) => {
+  const handleTerminalKey = (domEvent: KeyboardEvent) => {
     // Handle special key combinations
     if (domEvent.ctrlKey) {
       switch (domEvent.key) {

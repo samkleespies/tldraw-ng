@@ -35,14 +35,15 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
   const [runStatus, setRunStatus] = createSignal<'idle' | 'booting' | 'installing' | 'running' | 'ready' | 'error'>('idle');
   const [isUserTyping, setIsUserTyping] = createSignal(false);
 
-  const { getFileContent, setFileContent, currentFile, handleTitleBarDrag, fileSystem } = useWidgetLinking();
+  const { getFileContent, setFileContent, handleTitleBarDrag, fileSystem } = useWidgetLinking();
 
   // WebContainer instance
   let webcontainerInstance: WebContainer | null = null;
 
   // Listen for file updates and sync to WebContainer + Monaco Editor
   onMount(() => {
-    const handleFileUpdate = async (event: CustomEvent) => {
+    const handleFileUpdate = async (event: Event) => {
+      if (!(event instanceof CustomEvent)) return;
       const { filePath, content } = event.detail;
 
       // Update WebContainer if ready
@@ -76,7 +77,8 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
     };
 
     // Listen for bulk file modifications (from AI actions)
-    const handleFilesModified = async (event: CustomEvent) => {
+    const handleFilesModified = async (event: Event) => {
+      if (!(event instanceof CustomEvent)) return;
       const { modifications } = event.detail;
 
       // Check if any modification affects the current file
@@ -103,17 +105,18 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
       }
     };
 
-    window.addEventListener('file-updated', handleFileUpdate as EventListener);
-    window.addEventListener('files-modified', handleFilesModified as EventListener);
+    window.addEventListener('file-updated', handleFileUpdate);
+    window.addEventListener('files-modified', handleFilesModified);
 
     onCleanup(() => {
-      window.removeEventListener('file-updated', handleFileUpdate as EventListener);
-      window.removeEventListener('files-modified', handleFilesModified as EventListener);
+      window.removeEventListener('file-updated', handleFileUpdate);
+      window.removeEventListener('files-modified', handleFilesModified);
     });
   });
 
   let containerRef: HTMLDivElement | undefined;
   let editor: any = null;
+  let monacoApi: typeof import("monaco-editor") | null = null;
 
   // Store event handler reference for cleanup
   let fileOpenHandler: ((event: CustomEvent) => void) | null = null;
@@ -125,6 +128,7 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
       try {
         // Load Monaco dynamically
         const monaco = await loadMonaco();
+        monacoApi = monaco;
 
         // Disable all language features before creating editor
         try {
@@ -204,12 +208,12 @@ export const MonacoWidget: Component<MonacoWidgetProps> = (props) => {
             if (model && typeof monaco.editor.setModelLanguage === 'function') {
               const language = getLanguageFromFilePath(filePath);
               try {
-                monaco.editor.setModelLanguage(model, language);
+                monacoApi?.editor.setModelLanguage(model, language);
               } catch (langErr) {
                 console.warn('Failed to set language:', langErr);
                 // Fallback to plaintext if language setting fails
                 try {
-                  monaco.editor.setModelLanguage(model, 'plaintext');
+                  monacoApi?.editor.setModelLanguage(model, 'plaintext');
                 } catch (fallbackErr) {
                   console.warn('Failed to set fallback language:', fallbackErr);
                 }
@@ -371,14 +375,7 @@ export default defineConfig({
         installProcess.output.pipeTo(new WritableStream({
           write(data) {
             try {
-              let text: string;
-              if (typeof data === 'string') {
-                text = data;
-              } else if (data instanceof Uint8Array) {
-                text = new TextDecoder().decode(data);
-              } else {
-                text = String(data);
-              }
+              const text = data;
 
               // Clean up ANSI escape codes and other terminal formatting
               const cleanText = text
@@ -412,7 +409,7 @@ export default defineConfig({
       setRunStatus('running');
 
       // Set up server-ready listener
-      wc.on('server-ready', (port, url) => {
+      wc.on('server-ready', (_port, url) => {
         consoleBroadcaster.info(`Dev server ready at ${url}`, 'monaco-widget', 'webcontainer');
         setDevServerUrl(url);
         setRunStatus('ready');
@@ -433,14 +430,7 @@ export default defineConfig({
         devProcess.output.pipeTo(new WritableStream({
           write(data) {
             try {
-              let text: string;
-              if (typeof data === 'string') {
-                text = data;
-              } else if (data instanceof Uint8Array) {
-                text = new TextDecoder().decode(data);
-              } else {
-                text = String(data);
-              }
+              const text = data;
 
               // Clean up ANSI escape codes and other terminal formatting
               const cleanText = text
@@ -497,7 +487,7 @@ export default defineConfig({
 
   // Watch specifically for status bar visibility changes
   createEffect(() => {
-    const showStatusBar = props.height > 120;
+    void props.height; // Track height changes so the editor relayouts.
     if (editor && isLoaded()) {
       // Trigger layout when status bar visibility changes
       setTimeout(() => {
@@ -516,12 +506,12 @@ export default defineConfig({
       const model = editor.getModel();
       if (model) {
         try {
-          monaco.editor.setModelLanguage(model, props.language);
+          monacoApi?.editor.setModelLanguage(model, props.language);
         } catch (err) {
           console.warn('Failed to set language:', err);
           // Fallback to plaintext if language setting fails
           try {
-            monaco.editor.setModelLanguage(model, 'plaintext');
+            monacoApi?.editor.setModelLanguage(model, 'plaintext');
           } catch (fallbackErr) {
             console.warn('Failed to set fallback language:', fallbackErr);
           }
@@ -586,25 +576,6 @@ export default defineConfig({
           </svg>
         </div>
         <div>Loading Monaco Editor...</div>
-      </div>
-    </div>
-  );
-
-  /**
-   * Render error state
-   */
-  const renderError = () => (
-    <div style="display: flex; align-items: center; justify-content: center; height: 100%; background: #1e1e1e; color: #f48771;">
-      <div style="text-align: center; padding: 20px;">
-        <div style="margin-bottom: 12px;">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"/>
-            <line x1="15" y1="9" x2="9" y2="15"/>
-            <line x1="9" y1="9" x2="15" y2="15"/>
-          </svg>
-        </div>
-        <div style="font-weight: 600; margin-bottom: 8px;">Failed to load Monaco Editor</div>
-        <div style="font-size: 14px; opacity: 0.8;">{error()}</div>
       </div>
     </div>
   );
