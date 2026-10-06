@@ -1,5 +1,5 @@
-import { Component, createSignal, createEffect, onMount, onCleanup, For, createMemo, Index } from 'solid-js';
-import { WidgetLinkingProvider, WidgetLinkingContext } from '../context/WidgetLinkingContext';
+import { Component, createSignal, onMount, onCleanup, For, createMemo, Index } from 'solid-js';
+import { WidgetLinkingProvider } from '../context/WidgetLinkingContext';
 import { createStore, produce } from 'solid-js/store';
 import { getCoordinateTransformer, type Bounds } from '../utils/coordinates';
 import MonacoWidget from './widgets/MonacoWidget';
@@ -44,8 +44,8 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
   const [overlayStore, setOverlayStore] = createStore<Record<number, WidgetOverlay>>({});
   const [widgetInstances, setWidgetInstances] = createStore<Record<number, WidgetInstance>>({});
   const [isInitialized, setIsInitialized] = createSignal(false);
-  const [frameRate, setFrameRate] = createSignal(0);
-  const [overlayCount, setOverlayCount] = createSignal(0);
+  const [, setFrameRate] = createSignal(0);
+  const [, setOverlayCount] = createSignal(0);
 
   // Resize handles state
   const [resizeHandles, setResizeHandles] = createSignal<ResizeHandle[]>([]);
@@ -373,7 +373,7 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
   /**
    * Handle resize handle mouse down
    */
-  const handleResizeHandleMouseDown = (e: MouseEvent, handle: ResizeHandle) => {
+  const handleResizeHandleMouseDown = (e: MouseEvent, _handle: ResizeHandle) => {
     e.stopPropagation();
     e.preventDefault();
 
@@ -401,7 +401,7 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
   /**
    * Set up global mouse capture for resize operations
    */
-  const setupResizeMouseCapture = (startX: number, startY: number) => {
+  const setupResizeMouseCapture = (_startX: number, _startY: number) => {
     const core = (window as any).whiteboardCore;
     if (!core || !props.canvasRef) return;
 
@@ -621,7 +621,7 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
                 width={overlay.bounds.width}
                 height={overlay.bounds.height}
                 active={overlay.active}
-                onContentChange={(content) => {
+                onContentChange={() => {
                   // Content changed - no logging for performance
                 }}
               />
@@ -637,7 +637,7 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
                 width={overlay.bounds.width}
                 height={overlay.bounds.height}
                 active={overlay.active}
-                onCommand={(command) => {
+                onCommand={() => {
                   // Command executed - no logging for performance
                 }}
               />
@@ -657,7 +657,7 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
                 onLoad={() => {
                   // Preview loaded - no logging for performance
                 }}
-                onError={(error) => {
+                onError={() => {
                   // Preview error - no logging for performance
                 }}
               />
@@ -673,7 +673,7 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
                 width={overlay.bounds.width}
                 height={overlay.bounds.height}
                 active={overlay.active}
-                onMessage={(message) => {
+                onMessage={() => {
                   // Message sent - no logging for performance
                 }}
               />
@@ -689,7 +689,7 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
                 width={overlay.bounds.width}
                 height={overlay.bounds.height}
                 active={overlay.active}
-                onFileSelect={(file) => {
+                onFileSelect={() => {
                   // File selected - no logging for performance
                 }}
               />
@@ -705,7 +705,7 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
                 width={overlay.bounds.width}
                 height={overlay.bounds.height}
                 active={overlay.active}
-                onLogEntry={(entry) => {
+                onLogEntry={() => {
                   // Log entry - no logging for performance
                 }}
               />
@@ -863,7 +863,7 @@ export const OverlayContainer: Component<OverlayContainerProps> = (props) => {
               onMouseUp={handleWidgetMouseUp}
             >
               {/* Use stable widget instance instead of recreating */}
-              {widgetInstance()?.component?.()}
+              {widgetInstance()?.component?.({})}
             </div>
           );
         }}

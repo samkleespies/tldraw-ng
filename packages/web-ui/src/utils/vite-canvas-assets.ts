@@ -28,7 +28,7 @@ interface CanvasImage {
 /**
  * Get canvas images from the global whiteboard core
  */
-function getCanvasImages(): CanvasImage[] {
+export function getCanvasImages(): CanvasImage[] {
   try {
     // Access the global whiteboard core (available in browser context)
     const core = (window as any).whiteboardCore;
@@ -50,7 +50,7 @@ function getCanvasImages(): CanvasImage[] {
  */
 export function getCanvasImagesForAI(): CanvasImage[] {
   const images = getCanvasImages();
-  const enhancedImages = images.map((image, index) => ({
+  const enhancedImages = images.map((image, index): CanvasImage => ({
     ...image,
     suggested_filename: generateSuggestedFilename(image, index),
     available_actions: {
@@ -109,8 +109,6 @@ function generateSuggestedFilename(image: CanvasImage, index: number): string {
   const extension = mimeMatch ? mimeMatch[1] : 'png';
 
   // Generate a descriptive name based on position and size
-  const x = Math.round(image.position.x);
-  const y = Math.round(image.position.y);
   const w = Math.round(image.width);
   const h = Math.round(image.height);
 

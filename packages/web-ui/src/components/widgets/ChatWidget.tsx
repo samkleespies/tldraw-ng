@@ -286,24 +286,6 @@ Get your API key from: https://platform.openai.com/api-keys`;
   };
 
   /**
-   * Get language from file path
-   */
-  const getLanguageFromPath = (filePath: string): string => {
-    const ext = filePath.split('.').pop()?.toLowerCase();
-    switch (ext) {
-      case 'tsx':
-      case 'ts': return 'typescript';
-      case 'jsx':
-      case 'js': return 'javascript';
-      case 'html': return 'html';
-      case 'css': return 'css';
-      case 'json': return 'json';
-      case 'md': return 'markdown';
-      default: return 'text';
-    }
-  };
-
-  /**
    * Get canvas information for context
    */
   const getCanvasInfo = () => {

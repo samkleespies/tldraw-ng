@@ -78,11 +78,7 @@ export interface ChatContext {
       };
     };
   }[];
-  canvasAssetWorkflow?: {
-    description: string;
-    steps: string[];
-    available_actions: string[];
-  } | null;
+  canvasAssetWorkflow?: ReturnType<typeof import("./vite-canvas-assets").getCanvasAssetContext>["workflow_info"] | null;
   selectedImages?: {
     id: number;
     position: { x: number; y: number };
@@ -187,7 +183,7 @@ Be helpful, concise, and focus on practical advice for development workflows.`;
 
       if (context.imageShapes && context.imageShapes.length > 0) {
         systemPrompt += `\n\nImages on canvas: ${context.imageShapes.length} image(s)`;
-        context.imageShapes.forEach((image, index) => {
+        context.imageShapes.forEach((image) => {
           systemPrompt += `\n- Image ${image.id}: ${image.width}x${image.height} at (${image.position.x.toFixed(1)}, ${image.position.y.toFixed(1)})`;
         });
         systemPrompt += `\n\nWhen analyzing images, please describe what you see in detail, including any text, logos, UI elements, code, or other content. Be specific about colors, layout, and any readable text.`;

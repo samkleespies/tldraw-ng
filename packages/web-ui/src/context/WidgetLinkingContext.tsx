@@ -1,10 +1,4 @@
-import { createContext, useContext, createSignal, createEffect, onCleanup } from 'solid-js';
-
-interface FileSystemEntry {
-  path: string;
-  content: string;
-  language?: string;
-}
+import { createContext, useContext, createSignal } from 'solid-js';
 
 interface FileModification {
   type: 'create' | 'update' | 'delete';

@@ -12,16 +12,16 @@
   },
   "dependencies": {
     "@tldraw-ng/worker": "workspace:*",
-    "openai": "^5.7.0",
-    "solid-js": "^1.8.0"
+    "openai": "^5.23.2",
+    "solid-js": "^1.9.15"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "eslint": "^8.0.0",
-    "eslint-plugin-solid": "^0.13.0",
-    "prettier": "^3.0.0",
-    "typescript": "^5.0.0",
-    "vite": "^5.0.0",
-    "vite-plugin-solid": "^2.8.0"
+    "@types/node": "^20.19.43",
+    "eslint": "^8.57.1",
+    "eslint-plugin-solid": "^0.13.2",
+    "prettier": "^3.9.9",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.3",
+    "vite-plugin-solid": "^2.11.14"
   }
 }

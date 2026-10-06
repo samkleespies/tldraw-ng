@@ -1,4 +1,4 @@
-import { getStroke, getStrokePoints } from 'perfect-freehand';
+import { getStrokePoints } from 'perfect-freehand';
 
 export interface DrawPoint {
   x: number;
@@ -90,7 +90,7 @@ export function strokeToVertexObjects(
     return [];
   }
 
-  const vertices = [];
+  const vertices: Array<{ position: [number, number]; color: [number, number, number, number]; uv: [number, number]; shape_type: number }> = [];
 
   // Use centroid-based fan triangulation (same as Rust implementation)
   let centroidX = 0;
@@ -172,7 +172,7 @@ export function createSmoothPath(
 export function createSimpleLine(
   inputPoints: DrawPoint[],
   lineWidth: number = 2,
-  color: [number, number, number, number] = [1.0, 1.0, 1.0, 1.0]
+  _color: [number, number, number, number] = [1.0, 1.0, 1.0, 1.0]
 ): Float32Array {
   if (inputPoints.length < 2) {
     return new Float32Array(0);
@@ -259,7 +259,7 @@ export function trianglesToVertices(
   uv: [number, number];
   shape_type: number;
 }> {
-  const vertices = [];
+  const vertices: Array<{ position: [number, number]; color: [number, number, number, number]; uv: [number, number]; shape_type: number }> = [];
 
   for (let i = 0; i < triangles.length; i += 6) {
     // Each triangle has 3 vertices, each vertex has 2 coordinates

@@ -224,7 +224,7 @@ export const getWorkerFreeEditorOptions = () => ({
 
   // Enable code lens and lightbulb with mock workers
   codeLens: true,
-  lightbulb: { enabled: true },
+
 
   // Enable editor features
   folding: true,
