@@ -16,6 +16,10 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: taiki-e/install-action@wasm-pack
+      - run: wasm-pack build --target web --out-dir pkg
+        working-directory: crates/core
+        env:
+          RUSTUP_TOOLCHAIN: stable
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm run build
         env:
