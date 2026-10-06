@@ -56,7 +56,8 @@
   "pnpm": {
     "overrides": {
       "seroval": "^1.6.3",
-      "minimatch@^9": "^9.0.7"
+      "minimatch@^9": "^9.0.7",
+      "shell-quote": "^1.11.0"
     }
   }
 }
