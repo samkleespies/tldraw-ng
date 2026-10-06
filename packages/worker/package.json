@@ -15,12 +15,12 @@
     "core": "file:../../crates/core/pkg"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "typescript": "^5.0.0",
-    "vite": "^5.0.0",
-    "vitest": "^1.0.0",
-    "eslint": "^8.0.0",
-    "prettier": "^3.0.0"
+    "@types/node": "^20.19.43",
+    "eslint": "^8.57.1",
+    "prettier": "^3.9.9",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.3",
+    "vitest": "^4.1.11"
   },
   "files": [
     "dist"
